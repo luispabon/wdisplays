@@ -1,0 +1,9 @@
+spinner {
+  opacity: 0;
+  transition: opacity 200ms ease-in-out;
+  background-color: rgba(64, 64, 64, 0.5);
+}
+
+spinner.visible {
+  opacity: 1;
+}
