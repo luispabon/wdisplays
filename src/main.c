@@ -41,6 +41,7 @@ __attribute__((noreturn)) void wd_fatal_error(int status, const char *message) {
 
 static const char *MODE_PREFIX = "mode";
 static const char *TRANSFORM_PREFIX = "transform";
+static const char *APP_PREFIX = "app";
 
 #define NUM_ROTATIONS 4
 static const char *ROTATE_IDS[NUM_ROTATIONS] = {
@@ -66,25 +67,27 @@ static bool has_changes(const struct wd_state *state) {
     if (head->enabled != gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "enabled")))) {
       return TRUE;
     }
-    if (head->scale != gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "scale")))) {
+    double old_scale = round(head->scale * 100.) / 100.;
+    double new_scale = round(gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "scale"))) * 100.) / 100.;
+    if (old_scale != new_scale) {
       return TRUE;
     }
-    if (head->x != atoi(gtk_entry_get_text(GTK_ENTRY(gtk_builder_get_object(builder, "pos_x"))))) {
+    if (head->x != gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_x")))) {
       return TRUE;
     }
-    if (head->y != atoi(gtk_entry_get_text(GTK_ENTRY(gtk_builder_get_object(builder, "pos_y"))))) {
+    if (head->y != gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_y")))) {
       return TRUE;
     }
     int w = head->mode != NULL ? head->mode->width : head->custom_mode.width;
-    if (w != atoi(gtk_entry_get_text(GTK_ENTRY(gtk_builder_get_object(builder, "width"))))) {
+    if (w != gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "width")))) {
       return TRUE;
     }
     int h = head->mode != NULL ? head->mode->height : head->custom_mode.height;
-    if (h != atoi(gtk_entry_get_text(GTK_ENTRY(gtk_builder_get_object(builder, "height"))))) {
+    if (h != gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "height")))) {
       return TRUE;
     }
     int r = head->mode != NULL ? head->mode->refresh : head->custom_mode.refresh;
-    if (r / 1000. != atof(gtk_entry_get_text(GTK_ENTRY(gtk_builder_get_object(builder, "refresh"))))) {
+    if (r / 1000. != gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "refresh")))) {
       return TRUE;
     }
     for (int i = 0; i < NUM_ROTATIONS; i++) {
@@ -109,10 +112,85 @@ static bool has_changes(const struct wd_state *state) {
   return FALSE;
 }
 
+void fill_output_from_form(struct wd_head_config *output, GtkWidget *form) {
+  GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form), "builder"));
+  output->head = g_object_get_data(G_OBJECT(form), "head");
+  output->enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "enabled")));
+  output->scale = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "scale")));
+  output->x = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_x")));
+  output->y = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_y")));
+  output->width = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "width")));
+  output->height = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "height")));
+  output->refresh = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "refresh"))) * 1000.;
+  gboolean flipped = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "flipped")));
+  for (int i = 0; i < NUM_ROTATIONS; i++) {
+    GtkWidget *rotate = GTK_WIDGET(gtk_builder_get_object(builder, ROTATE_IDS[i]));
+    gboolean selected;
+    g_object_get(rotate, "active", &selected, NULL);
+    if (selected) {
+      switch (i) {
+        case 0: output->transform = flipped ? WL_OUTPUT_TRANSFORM_FLIPPED : WL_OUTPUT_TRANSFORM_NORMAL; break;
+        case 1: output->transform = flipped ? WL_OUTPUT_TRANSFORM_FLIPPED_90 : WL_OUTPUT_TRANSFORM_90; break;
+        case 2: output->transform = flipped ? WL_OUTPUT_TRANSFORM_FLIPPED_180 : WL_OUTPUT_TRANSFORM_180; break;
+        case 3: output->transform = flipped ? WL_OUTPUT_TRANSFORM_FLIPPED_270 : WL_OUTPUT_TRANSFORM_270; break;
+      }
+      break;
+    }
+  }
+}
+
+static gboolean send_apply(gpointer data) {
+  struct wd_state *state = data;
+  struct wl_list *outputs = calloc(1, sizeof(*outputs));
+  wl_list_init(outputs);
+  g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
+  for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
+    struct wd_head_config *output = calloc(1, sizeof(*output));
+    wl_list_insert(outputs, &output->link);
+    fill_output_from_form(output, GTK_WIDGET(form_iter->data));
+  }
+  wd_apply_state(state, outputs);
+  state->apply_pending = false;
+  return FALSE;
+}
+
+static void apply_state(struct wd_state *state) {
+  gtk_stack_set_visible_child_name(GTK_STACK(state->header_stack), "title");
+  if (!state->autoapply) {
+    gtk_style_context_add_class(gtk_widget_get_style_context(state->spinner), "visible");
+    gtk_overlay_set_overlay_pass_through(GTK_OVERLAY(state->overlay), state->spinner, FALSE);
+
+    gtk_widget_set_sensitive(state->stack_switcher, FALSE);
+    gtk_widget_set_sensitive(state->stack, FALSE);
+    gtk_widget_set_sensitive(state->zoom_in, FALSE);
+    gtk_widget_set_sensitive(state->zoom_reset, FALSE);
+    gtk_widget_set_sensitive(state->zoom_out, FALSE);
+    gtk_widget_set_sensitive(state->menu_button, FALSE);
+  }
+
+  /* queue this once per iteration in order to prevent duplicate updates */
+  if (!state->apply_pending) {
+    state->apply_pending = true;
+    g_idle_add(send_apply, state);
+  }
+}
+
+static gboolean apply_done_reset(gpointer data) {
+  wd_ui_reset_all(data);
+  return FALSE;
+}
+
 // BEGIN FORM CALLBACKS
 static void show_apply(struct wd_state *state) {
-  bool changed = has_changes(state);
-  gtk_stack_set_visible_child_name(GTK_STACK(state->header_stack), changed ? "apply" : "title");
+  const gchar *page = "title";
+  if (has_changes(state)) {
+    if (state->autoapply) {
+      apply_state(state);
+    } else {
+      page = "apply";
+    }
+  }
+  gtk_stack_set_visible_child_name(GTK_STACK(state->header_stack), page);
   gtk_widget_queue_draw(state->canvas);
 }
 
@@ -167,12 +245,9 @@ static void update_mode_entries(GtkWidget *form, int32_t w, int32_t h, int32_t r
   GtkWidget *height = GTK_WIDGET(gtk_builder_get_object(builder, "height"));
   GtkWidget *refresh = GTK_WIDGET(gtk_builder_get_object(builder, "refresh"));
 
-  g_autofree gchar *widthstr = g_strdup_printf("%d", w);
-  gtk_entry_set_text(GTK_ENTRY(width), widthstr);
-  g_autofree gchar *heightstr = g_strdup_printf("%d", h);
-  gtk_entry_set_text(GTK_ENTRY(height), heightstr);
-  g_autofree gchar *refreshstr = g_strdup_printf("%0.3f", r / 1000.0);
-  gtk_entry_set_text(GTK_ENTRY(refresh), refreshstr);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(width), w);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(height), h);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(refresh), r / 1000.);
 }
 
 static void mode_selected(GSimpleAction *action, GVariant *param, gpointer data) {
@@ -202,6 +277,10 @@ static void update_canvas_size(struct wd_state *state) {
     if (head->enabled && head->mode != NULL) {
       w = head->mode->width;
       h = head->mode->height;
+    }
+    if (head->scale > 0.) {
+      w /= head->scale;
+      h /= head->scale;
     }
 
     int x2 = head->x + w;
@@ -255,10 +334,8 @@ static void update_head_form(GtkWidget *form, unsigned int fields) {
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(scale), head->scale);
   }
   if (fields & WD_FIELD_POSITION) {
-    g_autofree gchar *xstr = g_strdup_printf("%d", head->x);
-    gtk_entry_set_text(GTK_ENTRY(pos_x), xstr);
-    g_autofree gchar *ystr = g_strdup_printf("%d", head->y);
-    gtk_entry_set_text(GTK_ENTRY(pos_y), ystr);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(pos_x), head->x);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(pos_y), head->y);
   }
 
   if (fields & WD_FIELD_MODE) {
@@ -362,11 +439,11 @@ void wd_ui_reset_heads(struct wd_state *state) {
       g_signal_connect_swapped(gtk_builder_get_object(builder, "enabled"), "toggled", G_CALLBACK(update_sensitivity), form);
       g_signal_connect_swapped(gtk_builder_get_object(builder, "enabled"), "toggled", G_CALLBACK(show_apply), state);
       g_signal_connect_swapped(gtk_builder_get_object(builder, "scale"), "value-changed", G_CALLBACK(show_apply), state);
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "pos_x"), "changed", G_CALLBACK(show_apply), state);
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "pos_y"), "changed", G_CALLBACK(show_apply), state);
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "width"), "changed", G_CALLBACK(show_apply), state);
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "height"), "changed", G_CALLBACK(show_apply), state);
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "refresh"), "changed", G_CALLBACK(show_apply), state);
+      g_signal_connect_swapped(gtk_builder_get_object(builder, "pos_x"), "value-changed", G_CALLBACK(show_apply), state);
+      g_signal_connect_swapped(gtk_builder_get_object(builder, "pos_y"), "value-changed", G_CALLBACK(show_apply), state);
+      g_signal_connect_swapped(gtk_builder_get_object(builder, "width"), "value-changed", G_CALLBACK(show_apply), state);
+      g_signal_connect_swapped(gtk_builder_get_object(builder, "height"), "value-changed", G_CALLBACK(show_apply), state);
+      g_signal_connect_swapped(gtk_builder_get_object(builder, "refresh"), "value-changed", G_CALLBACK(show_apply), state);
       g_signal_connect_swapped(gtk_builder_get_object(builder, "flipped"), "toggled", G_CALLBACK(show_apply), state);
 
     } else {
@@ -418,40 +495,17 @@ void wd_ui_apply_done(struct wd_state *state, struct wl_list *outputs) {
   gtk_widget_set_sensitive(state->zoom_in, TRUE);
   gtk_widget_set_sensitive(state->zoom_reset, TRUE);
   gtk_widget_set_sensitive(state->zoom_out, TRUE);
-  show_apply(state);
+  gtk_widget_set_sensitive(state->menu_button, TRUE);
+  if (!state->autoapply) {
+    show_apply(state);
+  }
+  g_idle_add(apply_done_reset, state);
 }
 
 void wd_ui_show_error(struct wd_state *state, const char *message) {
   gtk_label_set_text(GTK_LABEL(state->info_label), message);
   gtk_widget_show(state->info_bar);
   gtk_info_bar_set_revealed(GTK_INFO_BAR(state->info_bar), TRUE);
-}
-
-void fill_output_from_form(struct wd_head_config *output, GtkWidget *form) {
-  GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form), "builder"));
-  output->head = g_object_get_data(G_OBJECT(form), "head");
-  output->enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "enabled")));
-  output->scale = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "scale")));
-  output->x = atoi(gtk_entry_get_text(GTK_ENTRY(gtk_builder_get_object(builder, "pos_x"))));
-  output->y = atoi(gtk_entry_get_text(GTK_ENTRY(gtk_builder_get_object(builder, "pos_y"))));
-  output->width = atoi(gtk_entry_get_text(GTK_ENTRY(gtk_builder_get_object(builder, "width"))));
-  output->height = atoi(gtk_entry_get_text(GTK_ENTRY(gtk_builder_get_object(builder, "height"))));
-  output->refresh = atof(gtk_entry_get_text(GTK_ENTRY(gtk_builder_get_object(builder, "refresh")))) * 1000.;
-  gboolean flipped = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "flipped")));
-  for (int i = 0; i < NUM_ROTATIONS; i++) {
-    GtkWidget *rotate = GTK_WIDGET(gtk_builder_get_object(builder, ROTATE_IDS[i]));
-    gboolean selected;
-    g_object_get(rotate, "active", &selected, NULL);
-    if (selected) {
-      switch (i) {
-        case 0: output->transform = flipped ? WL_OUTPUT_TRANSFORM_FLIPPED : WL_OUTPUT_TRANSFORM_NORMAL; break;
-        case 1: output->transform = flipped ? WL_OUTPUT_TRANSFORM_FLIPPED_90 : WL_OUTPUT_TRANSFORM_90; break;
-        case 2: output->transform = flipped ? WL_OUTPUT_TRANSFORM_FLIPPED_180 : WL_OUTPUT_TRANSFORM_180; break;
-        case 3: output->transform = flipped ? WL_OUTPUT_TRANSFORM_FLIPPED_270 : WL_OUTPUT_TRANSFORM_270; break;
-      }
-      break;
-    }
-  }
 }
 
 // BEGIN GLOBAL CALLBACKS
@@ -482,15 +536,17 @@ gboolean draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
     GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form_iter->data), "builder"));
     gboolean enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "enabled")));
     if (enabled) {
-      int x = atoi(gtk_entry_get_text(GTK_ENTRY(gtk_builder_get_object(builder, "pos_x"))));
-      int y = atoi(gtk_entry_get_text(GTK_ENTRY(gtk_builder_get_object(builder, "pos_y"))));
-      int w = atoi(gtk_entry_get_text(GTK_ENTRY(gtk_builder_get_object(builder, "width"))));
-      int h = atoi(gtk_entry_get_text(GTK_ENTRY(gtk_builder_get_object(builder, "height"))));
+      int x = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_x")));
+      int y = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_y")));
+      int w = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "width")));
+      int h = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "height")));
+      double scale = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "scale")));
+      if (scale <= 0.) scale = 1.;
       cairo_rectangle(cr,
           x * state->zoom + .5 - scroll_x - state->xorigin,
           y * state->zoom + .5 - scroll_y - state->yorigin,
-          w * state->zoom,
-          h * state->zoom);
+          w * state->zoom / scale,
+          h * state->zoom / scale);
       cairo_stroke(cr);
     }
   }
@@ -505,26 +561,7 @@ static void cancel_changes(GtkButton *button, gpointer data) {
 }
 
 static void apply_changes(GtkButton *button, gpointer data) {
-  struct wd_state *state = data;
-  gtk_stack_set_visible_child_name(GTK_STACK(state->header_stack), "title");
-  gtk_style_context_add_class(gtk_widget_get_style_context(state->spinner), "visible");
-  gtk_overlay_set_overlay_pass_through(GTK_OVERLAY(state->overlay), state->spinner, FALSE);
-
-  gtk_widget_set_sensitive(state->stack_switcher, FALSE);
-  gtk_widget_set_sensitive(state->stack, FALSE);
-  gtk_widget_set_sensitive(state->zoom_in, FALSE);
-  gtk_widget_set_sensitive(state->zoom_reset, FALSE);
-  gtk_widget_set_sensitive(state->zoom_out, FALSE);
-
-  struct wl_list *outputs = calloc(1, sizeof(*outputs));
-  wl_list_init(outputs);
-  g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
-  for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
-    struct wd_head_config *output = calloc(1, sizeof(*output));
-    wl_list_insert(outputs, &output->link);
-    fill_output_from_form(output, GTK_WIDGET(form_iter->data));
-  }
-  wd_apply_state(state, outputs);
+  apply_state(data);
 }
 
 static void update_zoom(struct wd_state *state) {
@@ -567,6 +604,12 @@ static void info_bar_animation_done(GObject *object, GParamSpec *pspec, gpointer
   }
 }
 
+static void auto_apply_selected(GSimpleAction *action, GVariant *param, gpointer data) {
+  struct wd_state *state = data;
+  state->autoapply = !state->autoapply;
+  g_simple_action_set_state(action, g_variant_new_boolean(state->autoapply));
+}
+
 static void activate(GtkApplication* app, gpointer user_data) {
   GdkDisplay *gdk_display = gdk_display_get_default();
   if (!GDK_IS_WAYLAND_DISPLAY(gdk_display)) {
@@ -582,7 +625,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
   gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(css_provider),
       GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 
-  GtkBuilder *builder = gtk_builder_new_from_resource("/wd.ui");
+  GtkBuilder *builder = gtk_builder_new_from_resource("/wdisplay.ui");
   GtkWidget *window = GTK_WIDGET(gtk_builder_get_object(builder, "heads_window"));
   state->header_stack = GTK_WIDGET(gtk_builder_get_object(builder, "header_stack"));
   state->stack_switcher = GTK_WIDGET(gtk_builder_get_object(builder, "heads_stack_switcher"));
@@ -596,6 +639,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
   state->overlay = GTK_WIDGET(gtk_builder_get_object(builder, "overlay"));
   state->info_bar = GTK_WIDGET(gtk_builder_get_object(builder, "heads_info"));
   state->info_label = GTK_WIDGET(gtk_builder_get_object(builder, "heads_info_label"));
+  state->menu_button = GTK_WIDGET(gtk_builder_get_object(builder, "menu_button"));
   gtk_builder_add_callback_symbol(builder, "heads_draw", G_CALLBACK(draw));
   gtk_builder_add_callback_symbol(builder, "apply_changes", G_CALLBACK(apply_changes));
   gtk_builder_add_callback_symbol(builder, "cancel_changes", G_CALLBACK(cancel_changes));
@@ -603,9 +647,19 @@ static void activate(GtkApplication* app, gpointer user_data) {
   gtk_builder_add_callback_symbol(builder, "zoom_reset", G_CALLBACK(zoom_reset));
   gtk_builder_add_callback_symbol(builder, "zoom_in", G_CALLBACK(zoom_in));
   gtk_builder_add_callback_symbol(builder, "info_response", G_CALLBACK(info_response));
+  gtk_builder_add_callback_symbol(builder, "destroy", G_CALLBACK(cleanup));
   gtk_builder_connect_signals(builder, state);
   gtk_box_set_homogeneous(GTK_BOX(gtk_builder_get_object(builder, "zoom_box")), FALSE);
   update_zoom(state);
+
+  GSimpleActionGroup *main_actions = g_simple_action_group_new();
+  gtk_widget_insert_action_group(state->menu_button, APP_PREFIX, G_ACTION_GROUP(main_actions));
+  g_object_unref(main_actions);
+
+  GSimpleAction *autoapply_action = g_simple_action_new_stateful("auto-apply", NULL,
+      g_variant_new_boolean(state->autoapply));
+  g_signal_connect(autoapply_action, "activate", G_CALLBACK(auto_apply_selected), state);
+  g_action_map_add_action(G_ACTION_MAP(main_actions), G_ACTION(autoapply_action));
 
   /* first child of GtkInfoBar is always GtkRevealer */
   g_autoptr(GList) info_children = gtk_container_get_children(GTK_CONTAINER(state->info_bar));
@@ -620,7 +674,6 @@ static void activate(GtkApplication* app, gpointer user_data) {
 
   gtk_application_add_window(app, GTK_WINDOW(window));
   gtk_widget_show_all(window);
-  g_signal_connect(window, "destroy", G_CALLBACK(cleanup), state);
   g_object_unref(builder);
 }
 // END GLOBAL CALLBACKS

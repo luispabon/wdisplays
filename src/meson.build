@@ -17,5 +17,6 @@ executable(
     wayland_client,
     client_protos,
     gtk
-  ]
+  ],
+  install: true
 )

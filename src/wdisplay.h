@@ -103,6 +103,8 @@ struct wd_state {
   struct wl_list heads;
   uint32_t serial;
 
+  bool apply_pending;
+  bool autoapply;
   double zoom;
   int xorigin;
   int yorigin;
@@ -119,6 +121,7 @@ struct wd_state {
   GtkWidget *overlay;
   GtkWidget *info_bar;
   GtkWidget *info_label;
+  GtkWidget *menu_button;
 };
 
 /*

@@ -65,7 +65,6 @@ static void config_handle_failed(void *data,
     struct zwlr_output_configuration_v1 *config) {
   struct wd_pending_config *pending = data;
   zwlr_output_configuration_v1_destroy(config);
-  wd_ui_reset_all(pending->state);
   wd_ui_apply_done(pending->state, NULL);
   wd_ui_show_error(pending->state,
       "The display server was not able to process your changes.");
@@ -76,7 +75,6 @@ static void config_handle_cancelled(void *data,
     struct zwlr_output_configuration_v1 *config) {
   struct wd_pending_config *pending = data;
   zwlr_output_configuration_v1_destroy(config);
-  wd_ui_reset_all(pending->state);
   wd_ui_apply_done(pending->state, NULL);
   wd_ui_show_error(pending->state,
       "The display configuration was modified by the server before updates were processed. "
