@@ -25,6 +25,7 @@
 #include <gdk/gdkwayland.h>
 
 #include "wdisplay.h"
+#include "glviewport.h"
 
 __attribute__((noreturn)) void wd_fatal_error(int status, const char *message) {
   GtkWindow *parent = gtk_application_get_active_window(GTK_APPLICATION(g_application_get_default()));
@@ -180,6 +181,208 @@ static gboolean apply_done_reset(gpointer data) {
   return FALSE;
 }
 
+static void update_scroll_size(struct wd_state *state) {
+  state->render.viewport_width = gtk_widget_get_allocated_width(state->canvas);
+  state->render.viewport_height = gtk_widget_get_allocated_height(state->canvas);
+
+  GtkAdjustment *scroll_x_adj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroller));
+  GtkAdjustment *scroll_y_adj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroller));
+  int scroll_x_upper = state->render.width;
+  int scroll_y_upper = state->render.height;
+  gtk_adjustment_set_upper(scroll_x_adj, MAX(0, scroll_x_upper));
+  gtk_adjustment_set_upper(scroll_y_adj, MAX(0, scroll_y_upper));
+  gtk_adjustment_set_page_size(scroll_x_adj, state->render.viewport_width);
+  gtk_adjustment_set_page_size(scroll_y_adj, state->render.viewport_height);
+  gtk_adjustment_set_page_increment(scroll_x_adj, state->render.viewport_width);
+  gtk_adjustment_set_page_increment(scroll_y_adj, state->render.viewport_height);
+  gtk_adjustment_set_step_increment(scroll_x_adj, state->render.viewport_width / 10);
+  gtk_adjustment_set_step_increment(scroll_y_adj, state->render.viewport_height / 10);
+}
+
+/*
+ * Recalculates the desired canvas size, accounting for zoom + margins.
+ */
+static void update_canvas_size(struct wd_state *state) {
+  int xmin = 0;
+  int xmax = 0;
+  int ymin = 0;
+  int ymax = 0;
+
+  struct wd_head *head;
+  wl_list_for_each(head, &state->heads, link) {
+    int w = head->custom_mode.width;
+    int h = head->custom_mode.height;
+    if (head->enabled && head->mode != NULL) {
+      w = head->mode->width;
+      h = head->mode->height;
+    }
+    if (head->scale > 0.) {
+      w /= head->scale;
+      h /= head->scale;
+    }
+
+    int x2 = head->x + w;
+    int y2 = head->y + h;
+    xmin = MIN(xmin, head->x);
+    xmax = MAX(xmax, x2);
+    ymin = MIN(ymin, head->y);
+    ymax = MAX(ymax, y2);
+  }
+  // update canvas sizings
+  state->render.x_origin = floor(xmin * state->zoom) - CANVAS_MARGIN;
+  state->render.y_origin = floor(ymin * state->zoom) - CANVAS_MARGIN;
+  state->render.width = ceil((xmax - xmin) * state->zoom) + CANVAS_MARGIN * 2;
+  state->render.height = ceil((ymax - ymin) * state->zoom) + CANVAS_MARGIN * 2;
+
+  update_scroll_size(state);
+}
+
+static void cache_scroll(struct wd_state *state) {
+  GtkAdjustment *scroll_x_adj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroller));
+  GtkAdjustment *scroll_y_adj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroller));
+  state->render.scroll_x = gtk_adjustment_get_value(scroll_x_adj);
+  state->render.scroll_y = gtk_adjustment_get_value(scroll_y_adj);
+}
+
+static gboolean redraw_canvas(GtkWidget *widget, GdkFrameClock *frame_clock, gpointer data);
+
+static void update_tick_callback(struct wd_state *state) {
+  bool any_animate = false;
+  for (int i = 0; i < state->render.head_count; i++) {
+    struct wd_render_head_data *head = &state->render.heads[i];
+    if (state->render.updated_at < head->transition_begin + HOVER_USECS) {
+      any_animate = true;
+      break;
+    }
+  }
+  if (!any_animate && !state->capture) {
+    if (state->canvas_tick != -1) {
+      gtk_widget_remove_tick_callback(state->canvas, state->canvas_tick);
+      state->canvas_tick = -1;
+    }
+  } else if (state->canvas_tick == -1) {
+    state->canvas_tick =
+      gtk_widget_add_tick_callback(state->canvas, redraw_canvas, state, NULL);
+  }
+  gtk_gl_area_queue_render(GTK_GL_AREA(state->canvas));
+  gtk_gl_area_set_auto_render(GTK_GL_AREA(state->canvas), state->capture);
+}
+
+static void update_cursor(struct wd_state *state) {
+  bool any_hovered = false;
+  struct wd_head *head;
+  wl_list_for_each(head, &state->heads, link) {
+    struct wd_render_head_data *render = head->render;
+    if (render != NULL && render->hovered) {
+      any_hovered = true;
+      break;
+    }
+  }
+  GdkWindow *window = gtk_widget_get_window(state->canvas);
+  if (any_hovered) {
+    gdk_window_set_cursor(window, state->grab_cursor);
+  } else if (state->clicked != NULL) {
+    gdk_window_set_cursor(window, state->grabbing_cursor);
+  } else if (state->panning) {
+    gdk_window_set_cursor(window, state->move_cursor);
+  } else {
+    gdk_window_set_cursor(window, NULL);
+  }
+}
+
+static void update_hovered(struct wd_state *state) {
+  GdkDisplay *display = gdk_display_get_default();
+  GdkWindow *window = gtk_widget_get_window(state->canvas);
+  if (!gtk_widget_get_realized(state->canvas)) {
+    return;
+  }
+  GdkFrameClock *clock = gtk_widget_get_frame_clock(state->canvas);
+  uint64_t tick = gdk_frame_clock_get_frame_time(clock);
+  g_autoptr(GList) seats = gdk_display_list_seats(display);
+  struct wd_head *head;
+  wl_list_for_each(head, &state->heads, link) {
+    struct wd_render_head_data *render = head->render;
+    if (render != NULL) {
+      bool init_hovered = render->hovered;
+      render->hovered = false;
+      if (state->clicked == head) {
+        render->hovered = true;
+      } else if (state->clicked == NULL) {
+        for (GList *iter = seats; iter != NULL; iter = iter->next) {
+          double mouse_x;
+          double mouse_y;
+
+          GdkDevice *pointer = gdk_seat_get_pointer(GDK_SEAT(iter->data));
+          gdk_window_get_device_position_double(window, pointer, &mouse_x, &mouse_y, NULL);
+          if (mouse_x >= render->x1 && mouse_x < render->x2 &&
+              mouse_y >= render->y1 && mouse_y < render->y2) {
+            render->hovered = true;
+            break;
+          }
+        }
+      }
+      if (init_hovered != render->hovered) {
+        render->transition_begin = tick;
+      }
+    }
+  }
+  update_cursor(state);
+  update_tick_callback(state);
+}
+
+static inline void color_to_float_array(GtkStyleContext *ctx,
+    const char *color_name, float out[4]) {
+  GdkRGBA color;
+  gtk_style_context_lookup_color(ctx, color_name, &color);
+  out[0] = color.red;
+  out[1] = color.green;
+  out[2] = color.blue;
+  out[3] = color.alpha;
+}
+
+static void queue_canvas_draw(struct wd_state *state) {
+  GtkStyleContext *style_ctx = gtk_widget_get_style_context(state->canvas);
+  color_to_float_array(style_ctx,
+      "theme_fg_color", state->render.fg_color);
+  color_to_float_array(style_ctx,
+      "theme_bg_color", state->render.bg_color);
+  color_to_float_array(style_ctx,
+      "borders", state->render.border_color);
+  color_to_float_array(style_ctx,
+      "theme_selected_bg_color", state->render.selection_color);
+
+  cache_scroll(state);
+
+  state->render.head_count = 0;
+  g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
+  for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
+    GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form_iter->data), "builder"));
+    gboolean enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "enabled")));
+    if (enabled) {
+      int x = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_x")));
+      int y = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_y")));
+      int w = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "width")));
+      int h = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "height")));
+      double scale = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "scale")));
+      if (scale <= 0.)
+        scale = 1.;
+
+      struct wd_head *head = g_object_get_data(G_OBJECT(form_iter->data), "head");
+      struct wd_render_head_data *render = &state->render.heads[state->render.head_count];
+      render->x1 = floor(x * state->zoom - state->render.scroll_x - state->render.x_origin);
+      render->y1 = floor(y * state->zoom - state->render.scroll_y - state->render.y_origin);
+      render->x2 = floor(render->x1 + w * state->zoom / scale);
+      render->y2 = floor(render->y1 + h * state->zoom / scale);
+      head->render = render;
+
+      state->render.head_count++;
+      if (state->render.head_count >= HEADS_MAX)
+        break;
+    }
+  }
+  gtk_gl_area_queue_render(GTK_GL_AREA(state->canvas));
+}
+
 // BEGIN FORM CALLBACKS
 static void show_apply(struct wd_state *state) {
   const gchar *page = "title";
@@ -191,7 +394,12 @@ static void show_apply(struct wd_state *state) {
     }
   }
   gtk_stack_set_visible_child_name(GTK_STACK(state->header_stack), page);
-  gtk_widget_queue_draw(state->canvas);
+}
+
+static void update_ui(struct wd_state *state) {
+  show_apply(state);
+  update_canvas_size(state);
+  queue_canvas_draw(state);
 }
 
 static void update_sensitivity(GtkWidget *form) {
@@ -226,7 +434,7 @@ static void select_rotate_option(GtkWidget *form, GtkWidget *model_button) {
 static void rotate_selected(GSimpleAction *action, GVariant *param, gpointer data) {
   select_rotate_option(GTK_WIDGET(data), g_object_get_data(G_OBJECT(action), "widget"));
   const struct wd_head *head = g_object_get_data(G_OBJECT(data), "head");
-  show_apply(head->state);
+  update_ui(head->state);
 }
 
 static void select_mode_option(GtkWidget *form, int32_t w, int32_t h, int32_t r) {
@@ -257,46 +465,9 @@ static void mode_selected(GSimpleAction *action, GVariant *param, gpointer data)
 
   update_mode_entries(form, mode->width, mode->height, mode->refresh);
   select_mode_option(form, mode->width, mode->height, mode->refresh);
-  show_apply(head->state);
+  update_ui(head->state);
 }
 // END FORM CALLBACKS
-
-/*
- * Recalculates the desired canvas size, accounting for zoom + margins.
- */
-static void update_canvas_size(struct wd_state *state) {
-  int xmin = 0;
-  int xmax = 0;
-  int ymin = 0;
-  int ymax = 0;
-
-  struct wd_head *head;
-  wl_list_for_each(head, &state->heads, link) {
-    int w = head->custom_mode.width;
-    int h = head->custom_mode.height;
-    if (head->enabled && head->mode != NULL) {
-      w = head->mode->width;
-      h = head->mode->height;
-    }
-    if (head->scale > 0.) {
-      w /= head->scale;
-      h /= head->scale;
-    }
-
-    int x2 = head->x + w;
-    int y2 = head->y + h;
-    xmin = MIN(xmin, head->x);
-    xmax = MAX(xmax, x2);
-    ymin = MIN(ymin, head->y);
-    ymax = MAX(ymax, y2);
-  }
-  // update canvas sizings
-  state->xorigin = floor(xmin * state->zoom) - CANVAS_MARGIN;
-  state->yorigin = floor(ymin * state->zoom) - CANVAS_MARGIN;
-  int heads_width = ceil((xmax - xmin) * state->zoom) + CANVAS_MARGIN * 2;
-  int heads_height = ceil((ymax - ymin) * state->zoom) + CANVAS_MARGIN * 2;
-  gtk_layout_set_size(GTK_LAYOUT(state->canvas), heads_width, heads_height);
-}
 
 static void clear_menu(GtkWidget *box, GActionMap *action_map) {
   g_autoptr(GList) children = gtk_container_get_children(GTK_CONTAINER(box));
@@ -305,6 +476,7 @@ static void clear_menu(GtkWidget *box, GActionMap *action_map) {
     gtk_container_remove(GTK_CONTAINER(box), GTK_WIDGET(child->data));
   }
 }
+
 static void update_head_form(GtkWidget *form, unsigned int fields) {
   GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form), "builder"));
   GtkWidget *description = GTK_WIDGET(gtk_builder_get_object(builder, "description"));
@@ -368,7 +540,18 @@ static void update_head_form(GtkWidget *form, unsigned int fields) {
       w = head->mode->width;
       h = head->mode->height;
       r = head->mode->refresh;
+    } else if (!head->enabled && w == 0 && h == 0) {
+      struct wd_mode *mode;
+      wl_list_for_each(mode, &head->modes, link) {
+        if (mode->preferred) {
+          w = mode->width;
+          h = mode->height;
+          r = mode->refresh;
+          break;
+        }
+      }
     }
+
     update_mode_entries(form, w, h, r);
     select_mode_option(form, w, h, r);
     gtk_widget_show_all(mode_box);
@@ -389,8 +572,7 @@ static void update_head_form(GtkWidget *form, unsigned int fields) {
   if (fields & WD_FIELD_ENABLED) {
     update_sensitivity(form);
   }
-  show_apply(head->state);
-  gtk_widget_queue_draw(head->state->canvas);
+  update_ui(head->state);
 }
 
 void wd_ui_reset_heads(struct wd_state *state) {
@@ -437,14 +619,14 @@ void wd_ui_reset_heads(struct wd_state *state) {
       gtk_widget_show_all(form);
 
       g_signal_connect_swapped(gtk_builder_get_object(builder, "enabled"), "toggled", G_CALLBACK(update_sensitivity), form);
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "enabled"), "toggled", G_CALLBACK(show_apply), state);
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "scale"), "value-changed", G_CALLBACK(show_apply), state);
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "pos_x"), "value-changed", G_CALLBACK(show_apply), state);
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "pos_y"), "value-changed", G_CALLBACK(show_apply), state);
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "width"), "value-changed", G_CALLBACK(show_apply), state);
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "height"), "value-changed", G_CALLBACK(show_apply), state);
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "refresh"), "value-changed", G_CALLBACK(show_apply), state);
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "flipped"), "toggled", G_CALLBACK(show_apply), state);
+      g_signal_connect_swapped(gtk_builder_get_object(builder, "enabled"), "toggled", G_CALLBACK(update_ui), state);
+      g_signal_connect_swapped(gtk_builder_get_object(builder, "scale"), "value-changed", G_CALLBACK(update_ui), state);
+      g_signal_connect_swapped(gtk_builder_get_object(builder, "pos_x"), "value-changed", G_CALLBACK(update_ui), state);
+      g_signal_connect_swapped(gtk_builder_get_object(builder, "pos_y"), "value-changed", G_CALLBACK(update_ui), state);
+      g_signal_connect_swapped(gtk_builder_get_object(builder, "width"), "value-changed", G_CALLBACK(update_ui), state);
+      g_signal_connect_swapped(gtk_builder_get_object(builder, "height"), "value-changed", G_CALLBACK(update_ui), state);
+      g_signal_connect_swapped(gtk_builder_get_object(builder, "refresh"), "value-changed", G_CALLBACK(update_ui), state);
+      g_signal_connect_swapped(gtk_builder_get_object(builder, "flipped"), "toggled", G_CALLBACK(update_ui), state);
 
     } else {
       form = form_iter->data;
@@ -458,13 +640,10 @@ void wd_ui_reset_heads(struct wd_state *state) {
     g_object_unref(builder);
     gtk_container_remove(GTK_CONTAINER(state->stack), GTK_WIDGET(form_iter->data));
   }
-  gtk_widget_queue_draw(state->canvas);
+  update_canvas_size(state);
+  queue_canvas_draw(state);
 }
 
-/*
- * Updates the UI form for a single head. Useful for when the compositor notifies us of
- * updated configuration caused by another program.
- */
 void wd_ui_reset_head(const struct wd_head *head, unsigned int fields) {
   if (head->state->stack == NULL) {
     return;
@@ -474,8 +653,11 @@ void wd_ui_reset_head(const struct wd_head *head, unsigned int fields) {
     const struct wd_head *other = g_object_get_data(G_OBJECT(form_iter->data), "head");
     if (head == other) {
       update_head_form(GTK_WIDGET(form_iter->data), fields);
+      break;
     }
   }
+  update_canvas_size(head->state);
+  queue_canvas_draw(head->state);
 }
 
 void wd_ui_reset_all(struct wd_state *state) {
@@ -484,6 +666,8 @@ void wd_ui_reset_all(struct wd_state *state) {
   for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
     update_head_form(GTK_WIDGET(form_iter->data), WD_FIELDS_ALL);
   }
+  update_canvas_size(state);
+  queue_canvas_draw(state);
 }
 
 void wd_ui_apply_done(struct wd_state *state, struct wl_list *outputs) {
@@ -509,49 +693,396 @@ void wd_ui_show_error(struct wd_state *state, const char *message) {
 }
 
 // BEGIN GLOBAL CALLBACKS
-static void cleanup(GtkWidget *window, gpointer state) {
-  g_free(state);
+static void cleanup(GtkWidget *window, gpointer data) {
+  struct wd_state *state = data;
+  g_object_unref(state->grab_cursor);
+  g_object_unref(state->grabbing_cursor);
+  g_object_unref(state->move_cursor);
+  wd_state_destroy(state);
 }
 
-gboolean draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
+static void monitor_added(GdkDisplay *display, GdkMonitor *monitor, gpointer data) {
+  wd_add_output(data, gdk_wayland_monitor_get_wl_output(monitor));
+}
+
+static void monitor_removed(GdkDisplay *display, GdkMonitor *monitor, gpointer data) {
+  struct wl_display *wl_display = gdk_wayland_display_get_wl_display(display);
+  wd_remove_output(data, gdk_wayland_monitor_get_wl_output(monitor), wl_display);
+}
+
+static void canvas_realize(GtkWidget *widget, gpointer data) {
+  gtk_gl_area_make_current(GTK_GL_AREA(widget));
+  if (gtk_gl_area_get_error(GTK_GL_AREA(widget)) != NULL) {
+    return;
+  }
+
   struct wd_state *state = data;
+  state->gl_data = wd_gl_setup();
+}
+
+static inline bool size_changed(const struct wd_render_head_data *render) {
+  return render->x2 - render->x1 != render->tex_width ||
+    render->y2 - render->y1 != render->tex_height;
+}
+
+static inline void cairo_set_source_color(cairo_t *cr, float color[4]) {
+  cairo_set_source_rgba(cr, color[0], color[1], color[2], color[3]);
+}
+
+static void update_zoom(struct wd_state *state) {
+  g_autofree gchar *zoom_percent = g_strdup_printf("%.f%%", state->zoom * 100.);
+  gtk_button_set_label(GTK_BUTTON(state->zoom_reset), zoom_percent);
+  gtk_widget_set_sensitive(state->zoom_in, state->zoom < MAX_ZOOM);
+  gtk_widget_set_sensitive(state->zoom_out, state->zoom > MIN_ZOOM);
+
   update_canvas_size(state);
-  GtkStyleContext *style_ctx = gtk_widget_get_style_context(widget);
-  GtkAdjustment *scroll_x_adj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroller));
-  GtkAdjustment *scroll_y_adj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroller));
-  double scroll_x = gtk_adjustment_get_value(scroll_x_adj);
-  double scroll_y = gtk_adjustment_get_value(scroll_y_adj);
-  int width = gtk_widget_get_allocated_width(widget);
-  int height = gtk_widget_get_allocated_height(widget);
+  queue_canvas_draw(state);
+}
 
-  GdkRGBA border;
-  gtk_style_context_lookup_color(style_ctx, "borders", &border);
+static void zoom_to(struct wd_state *state, double zoom) {
+  state->zoom = zoom;
+  state->zoom = MAX(state->zoom, MIN_ZOOM);
+  state->zoom = MIN(state->zoom, MAX_ZOOM);
+  update_zoom(state);
+}
 
-  gdk_cairo_set_source_rgba(cr, &border);
-  cairo_set_line_width(cr, .5);
+static void zoom_out(struct wd_state *state) {
+  zoom_to(state, state->zoom * 0.75);
+}
 
-  gtk_render_background(style_ctx, cr, 0, 0, width, height);
-  g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
-  for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
-    GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form_iter->data), "builder"));
-    gboolean enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "enabled")));
-    if (enabled) {
-      int x = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_x")));
-      int y = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_y")));
-      int w = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "width")));
-      int h = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "height")));
-      double scale = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "scale")));
-      if (scale <= 0.) scale = 1.;
-      cairo_rectangle(cr,
-          x * state->zoom + .5 - scroll_x - state->xorigin,
-          y * state->zoom + .5 - scroll_y - state->yorigin,
-          w * state->zoom / scale,
-          h * state->zoom / scale);
-      cairo_stroke(cr);
+static void zoom_reset(struct wd_state *state) {
+  zoom_to(state, DEFAULT_ZOOM);
+}
+
+static void zoom_in(struct wd_state *state) {
+  zoom_to(state, state->zoom / 0.75);
+}
+
+#define TEXT_MARGIN 5
+
+static cairo_surface_t *draw_head(PangoContext *pango,
+    struct wd_render_data *info, const char *name,
+    unsigned width, unsigned height) {
+  cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
+      width, height);
+  cairo_t *cr = cairo_create(surface);
+
+  cairo_rectangle(cr, 0., 0., width, height);
+  cairo_set_source_color(cr, info->border_color);
+  cairo_fill(cr);
+
+  cairo_set_line_width(cr, 1.);
+  cairo_rectangle(cr, 0, 0, width, height);
+  cairo_set_source_color(cr, info->fg_color);
+  cairo_stroke(cr);
+
+  PangoLayout *layout = pango_layout_new(pango);
+  pango_layout_set_text(layout, name, -1);
+  int text_width = pango_units_from_double(width - TEXT_MARGIN * 2);
+  int text_height = pango_units_from_double(height - TEXT_MARGIN * 2);
+  pango_layout_set_width(layout, MAX(text_width, 0));
+  pango_layout_set_height(layout, MAX(text_height, 0));
+  pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
+  pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
+  pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
+
+  cairo_set_source_color(cr, info->fg_color);
+  pango_layout_get_size(layout, &text_width, &text_height);
+  cairo_move_to(cr, TEXT_MARGIN, (height - PANGO_PIXELS(text_height)) / 2);
+  pango_cairo_show_layout(cr, layout);
+  g_object_unref(layout);
+
+  cairo_destroy(cr);
+  cairo_surface_flush(surface);
+  return surface;
+}
+
+static void canvas_render(GtkGLArea *area, GdkGLContext *context, gpointer data) {
+  struct wd_state *state = data;
+
+  PangoContext *pango = gtk_widget_get_pango_context(state->canvas);
+  GdkFrameClock *clock = gtk_widget_get_frame_clock(state->canvas);
+  uint64_t tick = gdk_frame_clock_get_frame_time(clock);
+
+  wd_capture_frame(state);
+
+  struct wd_head *head;
+  wl_list_for_each(head, &state->heads, link) {
+    struct wd_render_head_data *render = head->render;
+    struct wd_output *output = wd_find_output(state, head);
+    struct wd_frame *frame = NULL;
+    if (output != NULL && !wl_list_empty(&output->frames)) {
+      frame = wl_container_of(output->frames.prev, frame, link);
+    }
+    if (render != NULL) {
+      if (state->capture && frame != NULL && frame->pixels != NULL) {
+        if (frame->tick > render->updated_at) {
+          render->tex_stride = frame->stride;
+          render->tex_width = frame->width;
+          render->tex_height = frame->height;
+          render->pixels = frame->pixels;
+          render->preview = true;
+          render->updated_at = tick;
+          render->y_invert = frame->y_invert;
+        }
+      } else if (render->preview
+          || render->pixels == NULL || size_changed(render)) {
+        render->tex_width = render->x2 - render->x1;
+        render->tex_height = render->y2 - render->y1;
+        render->preview = false;
+        if (head->surface != NULL) {
+          cairo_surface_destroy(head->surface);
+        }
+        head->surface = draw_head(pango, &state->render, head->name,
+            render->tex_width, render->tex_height);
+        render->pixels = cairo_image_surface_get_data(head->surface);
+        render->tex_stride = cairo_image_surface_get_stride(head->surface);
+        render->updated_at = tick;
+        render->y_invert = false;
+      }
     }
   }
 
+  wd_gl_render(state->gl_data, &state->render, tick);
+  state->render.updated_at = tick;
+}
+
+static void canvas_unrealize(GtkWidget *widget, gpointer data) {
+  gtk_gl_area_make_current(GTK_GL_AREA(widget));
+  if (gtk_gl_area_get_error(GTK_GL_AREA(widget)) != NULL) {
+    return;
+  }
+  struct wd_state *state = data;
+
+  GdkDisplay *gdk_display = gdk_display_get_default();
+  struct wl_display *display = gdk_wayland_display_get_wl_display(gdk_display);
+  wd_capture_wait(state, display);
+
+  wd_gl_cleanup(state->gl_data);
+  state->gl_data = NULL;
+}
+
+static gboolean canvas_click(GtkWidget *widget, GdkEvent *event,
+    gpointer data) {
+  struct wd_state *state = data;
+  if (event->button.type == GDK_BUTTON_PRESS) {
+    if (event->button.button == 1) {
+      int i = 0;
+      struct wd_head *head;
+      wl_list_for_each(head, &state->heads, link) {
+        struct wd_render_head_data *render = head->render;
+        if (render != NULL) {
+          double mouse_x = event->button.x;
+          double mouse_y = event->button.y;
+          if (mouse_x >= render->x1 && mouse_x < render->x2 &&
+              mouse_y >= render->y1 && mouse_y < render->y2) {
+            state->clicked = head;
+            state->click_offset.x = event->button.x - render->x1;
+            state->click_offset.y = event->button.y - render->y1;
+            break;
+          }
+        }
+        i++;
+      }
+      if (state->clicked != NULL) {
+        g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
+        for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
+          const struct wd_head *other = g_object_get_data(G_OBJECT(form_iter->data), "head");
+          if (state->clicked == other) {
+            gtk_stack_set_visible_child(GTK_STACK(state->stack), form_iter->data);
+            break;
+          }
+        }
+      }
+    } else if (event->button.button == 2) {
+      state->panning = true;
+      state->pan_last.x = event->button.x;
+      state->pan_last.y = event->button.y;
+    }
+  }
   return TRUE;
+}
+
+static gboolean canvas_release(GtkWidget *widget, GdkEvent *event,
+    gpointer data) {
+  struct wd_state *state = data;
+  if (event->button.button == 1) {
+    state->clicked = NULL;
+  }
+  if (event->button.button == 2) {
+    state->panning = false;
+  }
+  update_cursor(state);
+  return TRUE;
+}
+
+#define SNAP_DIST 6.
+
+static gboolean canvas_motion(GtkWidget *widget, GdkEvent *event,
+    gpointer data) {
+  struct wd_state *state = data;
+  if (event->motion.state & GDK_BUTTON2_MASK) {
+    GtkAdjustment *xadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroller));
+    GtkAdjustment *yadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroller));
+    double delta_x = event->motion.x - state->pan_last.x;
+    double delta_y = event->motion.y - state->pan_last.y;
+    gtk_adjustment_set_value(xadj, gtk_adjustment_get_value(xadj) + delta_x);
+    gtk_adjustment_set_value(yadj, gtk_adjustment_get_value(yadj) + delta_y);
+    state->pan_last.x = event->motion.x;
+    state->pan_last.y = event->motion.y;
+    queue_canvas_draw(state);
+  }
+  if ((event->motion.state & GDK_BUTTON1_MASK) && state->clicked != NULL) {
+    GtkWidget *form = NULL;
+    g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
+    for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
+      const struct wd_head *other = g_object_get_data(G_OBJECT(form_iter->data), "head");
+      if (state->clicked == other) {
+        form = form_iter->data;
+        break;
+      }
+    }
+    if (form != NULL) {
+      GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form), "builder"));
+      struct wd_point size = {
+        .x = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "width"))),
+        .y = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "height"))),
+      };
+      struct wd_point tl = {
+        .x = (event->motion.x - state->click_offset.x
+            + state->render.x_origin + state->render.scroll_x) / state->zoom,
+        .y = (event->motion.y - state->click_offset.y
+            + state->render.y_origin + state->render.scroll_y) / state->zoom
+      };
+      const struct wd_point br = {
+        .x = tl.x + size.x,
+        .y = tl.y + size.y
+      };
+      struct wd_point new_pos = tl;
+      float snap = SNAP_DIST / state->zoom;
+
+      for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
+        const struct wd_head *other = g_object_get_data(G_OBJECT(form_iter->data), "head");
+        if (other != state->clicked && !(event->motion.state & GDK_SHIFT_MASK)) {
+          GtkBuilder *other_builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form_iter->data), "builder"));
+          double x1 = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(other_builder, "pos_x")));
+          double y1 = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(other_builder, "pos_y")));
+          double x2 = x1 + gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(other_builder, "width")));
+          double y2 = y1 + gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(other_builder, "height")));
+          if (fabs(br.x) <= snap)
+            new_pos.x = -size.x;
+          if (fabs(br.y) <= snap)
+            new_pos.y = -size.y;
+          if (fabs(br.x - x1) <= snap)
+            new_pos.x = x1 - size.x;
+          if (fabs(br.x - x2) <= snap)
+            new_pos.x = x2 - size.x;
+          if (fabs(br.y - y1) <= snap)
+            new_pos.y = y1 - size.y;
+          if (fabs(br.y - y2) <= snap)
+            new_pos.y = y2 - size.y;
+
+          if (fabs(tl.x) <= snap)
+            new_pos.x = 0.;
+          if (fabs(tl.y) <= snap)
+            new_pos.y = 0.;
+          if (fabs(tl.x - x1) <= snap)
+            new_pos.x = x1;
+          if (fabs(tl.x - x2) <= snap)
+            new_pos.x = x2;
+          if (fabs(tl.y - y1) <= snap)
+            new_pos.y = y1;
+          if (fabs(tl.y - y2) <= snap)
+            new_pos.y = y2;
+        }
+      }
+      GtkWidget *pos_x = GTK_WIDGET(gtk_builder_get_object(builder, "pos_x"));
+      GtkWidget *pos_y = GTK_WIDGET(gtk_builder_get_object(builder, "pos_y"));
+      gtk_spin_button_set_value(GTK_SPIN_BUTTON(pos_x), new_pos.x);
+      gtk_spin_button_set_value(GTK_SPIN_BUTTON(pos_y), new_pos.y);
+    }
+  }
+  update_hovered(state);
+  return TRUE;
+}
+
+static gboolean canvas_enter(GtkWidget *widget, GdkEvent *event,
+    gpointer data) {
+  struct wd_state *state = data;
+  if (!(event->crossing.state & GDK_BUTTON1_MASK)) {
+    state->clicked = NULL;
+  }
+  if (!(event->crossing.state & GDK_BUTTON2_MASK)) {
+    state->panning = false;
+  }
+  update_cursor(state);
+  return TRUE;
+}
+
+static gboolean canvas_leave(GtkWidget *widget, GdkEvent *event,
+    gpointer data) {
+  struct wd_state *state = data;
+  for (int i = 0; i < state->render.head_count; i++) {
+    struct wd_render_head_data *head = &state->render.heads[i];
+    head->hovered = false;
+  }
+  update_tick_callback(state);
+  return TRUE;
+}
+
+static gboolean canvas_scroll(GtkWidget *widget, GdkEvent *event,
+    gpointer data) {
+  struct wd_state *state = data;
+  if (event->scroll.state & GDK_CONTROL_MASK) {
+    switch (event->scroll.direction) {
+    case GDK_SCROLL_UP:
+      zoom_in(state);
+      break;
+    case GDK_SCROLL_DOWN:
+      zoom_out(state);
+      break;
+    case GDK_SCROLL_SMOOTH:
+      if (event->scroll.delta_y)
+        zoom_to(state, state->zoom * pow(0.75, event->scroll.delta_y));
+      break;
+    default:
+      break;
+    }
+  } else {
+    GtkAdjustment *xadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroller));
+    GtkAdjustment *yadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroller));
+    double xstep = gtk_adjustment_get_step_increment(xadj);
+    double ystep = gtk_adjustment_get_step_increment(yadj);
+    switch (event->scroll.direction) {
+    case GDK_SCROLL_UP:
+      gtk_adjustment_set_value(yadj, gtk_adjustment_get_value(yadj) - ystep);
+      break;
+    case GDK_SCROLL_DOWN:
+      gtk_adjustment_set_value(yadj, gtk_adjustment_get_value(yadj) + ystep);
+      break;
+    case GDK_SCROLL_LEFT:
+      gtk_adjustment_set_value(xadj, gtk_adjustment_get_value(xadj) - xstep);
+      break;
+    case GDK_SCROLL_RIGHT:
+      gtk_adjustment_set_value(xadj, gtk_adjustment_get_value(xadj) + xstep);
+      break;
+    case GDK_SCROLL_SMOOTH:
+      if (event->scroll.delta_x)
+        gtk_adjustment_set_value(xadj, gtk_adjustment_get_value(xadj) + xstep * event->scroll.delta_x);
+      if (event->scroll.delta_y)
+        gtk_adjustment_set_value(yadj, gtk_adjustment_get_value(yadj) + ystep * event->scroll.delta_y);
+      break;
+    default:
+      break;
+    }
+  }
+  return FALSE;
+}
+
+static void canvas_resize(GtkWidget *widget, GdkRectangle *allocation,
+    gpointer data) {
+  struct wd_state *state = data;
+  update_scroll_size(state);
 }
 
 static void cancel_changes(GtkButton *button, gpointer data) {
@@ -562,34 +1093,6 @@ static void cancel_changes(GtkButton *button, gpointer data) {
 
 static void apply_changes(GtkButton *button, gpointer data) {
   apply_state(data);
-}
-
-static void update_zoom(struct wd_state *state) {
-  g_autofree gchar *zoom_percent = g_strdup_printf("%.f%%", state->zoom * 100.);
-  gtk_button_set_label(GTK_BUTTON(state->zoom_reset), zoom_percent);
-  gtk_widget_set_sensitive(state->zoom_in, state->zoom < MAX_ZOOM);
-  gtk_widget_set_sensitive(state->zoom_out, state->zoom > MIN_ZOOM);
-  gtk_widget_queue_draw(state->canvas);
-}
-
-static void zoom_out(GtkButton *button, gpointer data) {
-  struct wd_state *state = data;
-  state->zoom *= 0.75;
-  state->zoom = MAX(state->zoom, MIN_ZOOM);
-  update_zoom(state);
-}
-
-static void zoom_reset(GtkButton *button, gpointer data) {
-  struct wd_state *state = data;
-  state->zoom = DEFAULT_ZOOM;
-  update_zoom(state);
-}
-
-static void zoom_in(GtkButton *button, gpointer data) {
-  struct wd_state *state = data;
-  state->zoom /= 0.75;
-  state->zoom = MIN(state->zoom, MAX_ZOOM);
-  update_zoom(state);
 }
 
 static void info_response(GtkInfoBar *info_bar, gint response_id, gpointer data) {
@@ -610,20 +1113,40 @@ static void auto_apply_selected(GSimpleAction *action, GVariant *param, gpointer
   g_simple_action_set_state(action, g_variant_new_boolean(state->autoapply));
 }
 
+static gboolean redraw_canvas(GtkWidget *widget, GdkFrameClock *frame_clock, gpointer data) {
+  struct wd_state *state = data;
+  if (state->capture) {
+    wd_capture_frame(state);
+  }
+  queue_canvas_draw(state);
+  return G_SOURCE_CONTINUE;
+}
+
+static void capture_selected(GSimpleAction *action, GVariant *param, gpointer data) {
+  struct wd_state *state = data;
+  state->capture = !state->capture;
+  g_simple_action_set_state(action, g_variant_new_boolean(state->capture));
+  update_tick_callback(state);
+}
+
 static void activate(GtkApplication* app, gpointer user_data) {
   GdkDisplay *gdk_display = gdk_display_get_default();
   if (!GDK_IS_WAYLAND_DISPLAY(gdk_display)) {
     wd_fatal_error(1, "This program is only usable on Wayland sessions.");
   }
 
-  struct wd_state *state = g_new0(struct wd_state, 1);
+  struct wd_state *state = wd_state_create();
   state->zoom = DEFAULT_ZOOM;
-  wl_list_init(&state->heads);
+  state->canvas_tick = -1;
 
   GtkCssProvider *css_provider = gtk_css_provider_new();
   gtk_css_provider_load_from_resource(css_provider, "/style.css");
   gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(css_provider),
       GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+
+  state->grab_cursor = gdk_cursor_new_from_name(gdk_display, "grab");
+  state->grabbing_cursor = gdk_cursor_new_from_name(gdk_display, "grabbing");
+  state->move_cursor = gdk_cursor_new_from_name(gdk_display, "move");
 
   GtkBuilder *builder = gtk_builder_new_from_resource("/wdisplay.ui");
   GtkWidget *window = GTK_WIDGET(gtk_builder_get_object(builder, "heads_window"));
@@ -631,7 +1154,6 @@ static void activate(GtkApplication* app, gpointer user_data) {
   state->stack_switcher = GTK_WIDGET(gtk_builder_get_object(builder, "heads_stack_switcher"));
   state->stack = GTK_WIDGET(gtk_builder_get_object(builder, "heads_stack"));
   state->scroller = GTK_WIDGET(gtk_builder_get_object(builder, "heads_scroll"));
-  state->canvas = GTK_WIDGET(gtk_builder_get_object(builder, "heads_layout"));
   state->spinner = GTK_WIDGET(gtk_builder_get_object(builder, "spinner"));
   state->zoom_out = GTK_WIDGET(gtk_builder_get_object(builder, "zoom_out"));
   state->zoom_reset = GTK_WIDGET(gtk_builder_get_object(builder, "zoom_reset"));
@@ -640,7 +1162,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
   state->info_bar = GTK_WIDGET(gtk_builder_get_object(builder, "heads_info"));
   state->info_label = GTK_WIDGET(gtk_builder_get_object(builder, "heads_info_label"));
   state->menu_button = GTK_WIDGET(gtk_builder_get_object(builder, "menu_button"));
-  gtk_builder_add_callback_symbol(builder, "heads_draw", G_CALLBACK(draw));
+
   gtk_builder_add_callback_symbol(builder, "apply_changes", G_CALLBACK(apply_changes));
   gtk_builder_add_callback_symbol(builder, "cancel_changes", G_CALLBACK(cancel_changes));
   gtk_builder_add_callback_symbol(builder, "zoom_out", G_CALLBACK(zoom_out));
@@ -650,6 +1172,31 @@ static void activate(GtkApplication* app, gpointer user_data) {
   gtk_builder_add_callback_symbol(builder, "destroy", G_CALLBACK(cleanup));
   gtk_builder_connect_signals(builder, state);
   gtk_box_set_homogeneous(GTK_BOX(gtk_builder_get_object(builder, "zoom_box")), FALSE);
+
+  state->canvas = wd_gl_viewport_new();
+  gtk_container_add(GTK_CONTAINER(state->scroller), state->canvas);
+  gtk_widget_add_events(state->canvas, GDK_POINTER_MOTION_MASK
+      | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_SCROLL_MASK
+      | GDK_ENTER_NOTIFY_MASK | GDK_LEAVE_NOTIFY_MASK);
+  g_signal_connect(state->canvas, "realize", G_CALLBACK(canvas_realize), state);
+  g_signal_connect(state->canvas, "render", G_CALLBACK(canvas_render), state);
+  g_signal_connect(state->canvas, "unrealize", G_CALLBACK(canvas_unrealize), state);
+  g_signal_connect(state->canvas, "button-press-event", G_CALLBACK(canvas_click), state);
+  g_signal_connect(state->canvas, "button-release-event", G_CALLBACK(canvas_release), state);
+  g_signal_connect(state->canvas, "enter-notify-event", G_CALLBACK(canvas_enter), state);
+  g_signal_connect(state->canvas, "leave-notify-event", G_CALLBACK(canvas_leave), state);
+  g_signal_connect(state->canvas, "motion-notify-event", G_CALLBACK(canvas_motion), state);
+  g_signal_connect(state->canvas, "scroll-event", G_CALLBACK(canvas_scroll), state);
+  g_signal_connect(state->canvas, "size-allocate", G_CALLBACK(canvas_resize), state);
+  gtk_gl_area_set_use_es(GTK_GL_AREA(state->canvas), TRUE);
+  gtk_gl_area_set_has_alpha(GTK_GL_AREA(state->canvas), TRUE);
+  gtk_gl_area_set_auto_render(GTK_GL_AREA(state->canvas), state->capture);
+
+  GtkAdjustment *scroll_x_adj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scroller));
+  GtkAdjustment *scroll_y_adj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroller));
+  g_signal_connect_swapped(scroll_x_adj, "value-changed", G_CALLBACK(queue_canvas_draw), state);
+  g_signal_connect_swapped(scroll_y_adj, "value-changed", G_CALLBACK(queue_canvas_draw), state);
+
   update_zoom(state);
 
   GSimpleActionGroup *main_actions = g_simple_action_group_new();
@@ -661,6 +1208,11 @@ static void activate(GtkApplication* app, gpointer user_data) {
   g_signal_connect(autoapply_action, "activate", G_CALLBACK(auto_apply_selected), state);
   g_action_map_add_action(G_ACTION_MAP(main_actions), G_ACTION(autoapply_action));
 
+  GSimpleAction *capture_action = g_simple_action_new_stateful("capture-screens", NULL,
+      g_variant_new_boolean(state->capture));
+  g_signal_connect(capture_action, "activate", G_CALLBACK(capture_selected), state);
+  g_action_map_add_action(G_ACTION_MAP(main_actions), G_ACTION(capture_action));
+
   /* first child of GtkInfoBar is always GtkRevealer */
   g_autoptr(GList) info_children = gtk_container_get_children(GTK_CONTAINER(state->info_bar));
   g_signal_connect(info_children->data, "notify::child-revealed", G_CALLBACK(info_bar_animation_done), state);
@@ -671,6 +1223,23 @@ static void activate(GtkApplication* app, gpointer user_data) {
   if (state->output_manager == NULL) {
     wd_fatal_error(1, "Compositor doesn't support wlr-output-management-unstable-v1");
   }
+  if (state->xdg_output_manager == NULL) {
+    wd_fatal_error(1, "Compositor doesn't support xdg-output-unstable-v1");
+  }
+  if (state->copy_manager == NULL) {
+    state->capture = false;
+    g_simple_action_set_state(capture_action, g_variant_new_boolean(state->capture));
+    g_simple_action_set_enabled(capture_action, FALSE);
+  }
+
+  int n_monitors = gdk_display_get_n_monitors(gdk_display);
+  for (int i = 0; i < n_monitors; i++) {
+    GdkMonitor *monitor = gdk_display_get_monitor(gdk_display, i);
+    wd_add_output(state, gdk_wayland_monitor_get_wl_output(monitor));
+  }
+
+  g_signal_connect(gdk_display, "monitor-added", G_CALLBACK(monitor_added), state);
+  g_signal_connect(gdk_display, "monitor-removed", G_CALLBACK(monitor_removed), state);
 
   gtk_application_add_window(app, GTK_WINDOW(window));
   gtk_widget_show_all(window);

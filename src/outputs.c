@@ -28,15 +28,26 @@
  * https://github.com/emersion/kanshi/blob/38d27474b686fcc8324cc5e454741a49577c0988/main.c
  */
 
+#define _GNU_SOURCE
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <errno.h>
+
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include "wdisplay.h"
-#include "wlr-output-management-unstable-v1-client-protocol.h"
 
-#define HEADS_MAX 64
+#include "wlr-output-management-unstable-v1-client-protocol.h"
+#include "xdg-output-unstable-v1-client-protocol.h"
+#include "wlr-screencopy-unstable-v1-client-protocol.h"
+
+static void noop() {
+  // This space is intentionally left blank
+}
 
 struct wd_pending_config {
   struct wd_state *state;
@@ -143,6 +154,171 @@ void wd_apply_state(struct wd_state *state, struct wl_list *new_outputs) {
   zwlr_output_configuration_v1_apply(config);
 }
 
+static void wd_frame_destroy(struct wd_frame *frame) {
+  if (frame->pixels != NULL)
+    munmap(frame->pixels, frame->height * frame->stride);
+  if (frame->buffer != NULL)
+    wl_buffer_destroy(frame->buffer);
+  if (frame->pool != NULL)
+    wl_shm_pool_destroy(frame->pool);
+  if (frame->capture_fd != -1)
+    close(frame->capture_fd);
+  if (frame->wlr_frame != NULL)
+    zwlr_screencopy_frame_v1_destroy(frame->wlr_frame);
+
+  wl_list_remove(&frame->link);
+  free(frame);
+}
+
+static void capture_buffer(void *data,
+    struct zwlr_screencopy_frame_v1 *copy_frame,
+    uint32_t format, uint32_t width, uint32_t height, uint32_t stride) {
+  struct wd_frame *frame = data;
+
+  char *shm_name = NULL;
+  if (asprintf(&shm_name, "/wd-%s", frame->output->name) == -1) {
+    fprintf(stderr, "asprintf: %s\n", strerror(errno));
+    shm_name = NULL;
+    goto err;
+  }
+  frame->capture_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0);
+  if (frame->capture_fd == -1) {
+    fprintf(stderr, "shm_open: %s\n", strerror(errno));
+    goto err;
+  }
+  shm_unlink(shm_name);
+  free(shm_name);
+
+  size_t size = stride * height;
+  ftruncate(frame->capture_fd, size);
+  frame->pool = wl_shm_create_pool(frame->output->state->shm,
+      frame->capture_fd, size);
+  frame->buffer = wl_shm_pool_create_buffer(frame->pool, 0,
+      width, height, stride, format);
+  zwlr_screencopy_frame_v1_copy(copy_frame, frame->buffer);
+  frame->stride = stride;
+  frame->width = width;
+  frame->height = height;
+
+  return;
+err:
+  if (shm_name != NULL) {
+    free(shm_name);
+  }
+  wd_frame_destroy(frame);
+}
+
+static void capture_flags(void *data,
+    struct zwlr_screencopy_frame_v1 *wlr_frame,
+    uint32_t flags) {
+  struct wd_frame *frame = data;
+  frame->y_invert = !!(flags & ZWLR_SCREENCOPY_FRAME_V1_FLAGS_Y_INVERT);
+}
+
+static void capture_ready(void *data,
+    struct zwlr_screencopy_frame_v1 *wlr_frame,
+    uint32_t tv_sec_hi, uint32_t tv_sec_lo, uint32_t tv_nsec) {
+  struct wd_frame *frame = data;
+
+  frame->pixels = mmap(NULL, frame->stride * frame->height,
+      PROT_READ, MAP_SHARED, frame->capture_fd, 0);
+  if (frame->pixels == MAP_FAILED) {
+    frame->pixels = NULL;
+    fprintf(stderr, "mmap: %d: %s\n", frame->capture_fd, strerror(errno));
+    wd_frame_destroy(frame);
+    return;
+  } else {
+    uint64_t tv_sec = (uint64_t) tv_sec_hi << 32 | tv_sec_lo;
+    frame->tick = (tv_sec * 1000000) + (tv_nsec / 1000);
+  }
+
+  zwlr_screencopy_frame_v1_destroy(frame->wlr_frame);
+  frame->wlr_frame = NULL;
+
+  struct wd_frame *frame_iter, *frame_tmp;
+  wl_list_for_each_safe(frame_iter, frame_tmp, &frame->output->frames, link) {
+    if (frame != frame_iter) {
+      wd_frame_destroy(frame_iter);
+    }
+  }
+}
+
+static void capture_failed(void *data,
+    struct zwlr_screencopy_frame_v1 *wlr_frame) {
+  struct wd_frame *frame = data;
+  wd_frame_destroy(frame);
+}
+
+struct zwlr_screencopy_frame_v1_listener capture_listener = {
+  .buffer = capture_buffer,
+  .flags = capture_flags,
+  .ready = capture_ready,
+  .failed = capture_failed
+};
+
+static bool has_pending_captures(struct wd_state *state) {
+  struct wd_output *output;
+  wl_list_for_each(output, &state->outputs, link) {
+    struct wd_frame *frame;
+    wl_list_for_each(frame, &output->frames, link) {
+      if (frame->pixels == NULL) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void wd_capture_frame(struct wd_state *state) {
+  if (state->copy_manager == NULL || has_pending_captures(state)
+      || !state->capture) {
+    return;
+  }
+
+  struct wd_output *output;
+  wl_list_for_each(output, &state->outputs, link) {
+    struct wd_frame *frame = calloc(1, sizeof(*frame));
+    frame->output = output;
+    frame->capture_fd = -1;
+    frame->wlr_frame =
+      zwlr_screencopy_manager_v1_capture_output(state->copy_manager, 1,
+        output->wl_output);
+    zwlr_screencopy_frame_v1_add_listener(frame->wlr_frame, &capture_listener,
+        frame);
+    wl_list_insert(&output->frames, &frame->link);
+  }
+}
+
+static void wd_output_destroy(struct wd_output *output) {
+  struct wd_frame *frame, *frame_tmp;
+  wl_list_for_each_safe(frame, frame_tmp, &output->frames, link) {
+    wd_frame_destroy(frame);
+  }
+  zxdg_output_v1_destroy(output->xdg_output);
+  free(output->name);
+  free(output);
+}
+
+static void wd_mode_destroy(struct wd_mode* mode) {
+  zwlr_output_mode_v1_destroy(mode->wlr_mode);
+  free(mode);
+}
+
+static void wd_head_destroy(struct wd_head *head) {
+  struct wd_mode *mode, *mode_tmp;
+  if (head->state->clicked == head) {
+    head->state->clicked = NULL;
+  }
+  wl_list_for_each_safe(mode, mode_tmp, &head->modes, link) {
+    zwlr_output_mode_v1_destroy(mode->wlr_mode);
+    free(mode);
+  }
+  zwlr_output_head_v1_destroy(head->wlr_head);
+  free(head->name);
+  free(head->description);
+  free(head);
+}
+
 static void mode_handle_size(void *data, struct zwlr_output_mode_v1 *wlr_mode,
     int32_t width, int32_t height) {
   struct wd_mode *mode = data;
@@ -166,8 +342,7 @@ static void mode_handle_finished(void *data,
     struct zwlr_output_mode_v1 *wlr_mode) {
   struct wd_mode *mode = data;
   wl_list_remove(&mode->link);
-  zwlr_output_mode_v1_destroy(mode->wlr_mode);
-  free(mode);
+  wd_mode_destroy(mode);
 }
 
 static const struct zwlr_output_mode_v1_listener mode_listener = {
@@ -217,6 +392,7 @@ static void head_handle_enabled(void *data,
   struct wd_head *head = data;
   head->enabled = !!enabled;
   if (!enabled) {
+    head->output = NULL;
     head->mode = NULL;
   }
   wd_ui_reset_head(head, WD_FIELD_ENABLED);
@@ -264,10 +440,7 @@ static void head_handle_finished(void *data,
     struct zwlr_output_head_v1 *wlr_head) {
   struct wd_head *head = data;
   wl_list_remove(&head->link);
-  zwlr_output_head_v1_destroy(head->wlr_head);
-  free(head->name);
-  free(head->description);
-  free(head);
+  wd_head_destroy(head);
 }
 
 static const struct zwlr_output_head_v1_listener head_listener = {
@@ -307,41 +480,169 @@ static void output_manager_handle_done(void *data,
   wd_ui_reset_heads(state);
 }
 
-static void output_manager_handle_finished(void *data,
-    struct zwlr_output_manager_v1 *manager) {
-  // This space is intentionally left blank
-}
-
 static const struct zwlr_output_manager_v1_listener output_manager_listener = {
   .head = output_manager_handle_head,
   .done = output_manager_handle_done,
-  .finished = output_manager_handle_finished,
+  .finished = noop,
 };
-
 static void registry_handle_global(void *data, struct wl_registry *registry,
     uint32_t name, const char *interface, uint32_t version) {
   struct wd_state *state = data;
 
   if (strcmp(interface, zwlr_output_manager_v1_interface.name) == 0) {
-    state->output_manager = wl_registry_bind(registry, name, &zwlr_output_manager_v1_interface, 1);
-    zwlr_output_manager_v1_add_listener(state->output_manager, &output_manager_listener, state);
+    state->output_manager = wl_registry_bind(registry, name,
+        &zwlr_output_manager_v1_interface, version);
+    zwlr_output_manager_v1_add_listener(state->output_manager,
+        &output_manager_listener, state);
+  } else if (strcmp(interface, zxdg_output_manager_v1_interface.name) == 0) {
+    state->xdg_output_manager = wl_registry_bind(registry, name,
+        &zxdg_output_manager_v1_interface, version);
+  } else if(strcmp(interface, zwlr_screencopy_manager_v1_interface.name) == 0) {
+    state->copy_manager = wl_registry_bind(registry, name,
+        &zwlr_screencopy_manager_v1_interface, version);
+  } else if(strcmp(interface, wl_shm_interface.name) == 0) {
+    state->shm = wl_registry_bind(registry, name, &wl_shm_interface, version);
   }
-}
-
-static void registry_handle_global_remove(void *data,
-    struct wl_registry *registry, uint32_t name) {
-  // This space is intentionally left blank
 }
 
 static const struct wl_registry_listener registry_listener = {
   .global = registry_handle_global,
-  .global_remove = registry_handle_global_remove,
+  .global_remove = noop,
 };
 
-void wd_add_output_management_listener(struct wd_state *state, struct wl_display *display) {
+void wd_add_output_management_listener(struct wd_state *state, struct
+    wl_display *display) {
   struct wl_registry *registry = wl_display_get_registry(display);
   wl_registry_add_listener(registry, &registry_listener, state);
 
   wl_display_dispatch(display);
   wl_display_roundtrip(display);
+}
+
+static struct wd_head *wd_find_head(struct wd_state *state,
+    struct wd_output *output) {
+  struct wd_head *head;
+  wl_list_for_each(head, &state->heads, link) {
+    if (output->name != NULL && strcmp(output->name, head->name) == 0) {
+      return head;
+    }
+  }
+  return NULL;
+}
+
+static void output_logical_position(void *data, struct zxdg_output_v1 *zxdg_output_v1,
+    int32_t x, int32_t y) {
+  struct wd_output *output = data;
+  struct wd_head *head = wd_find_head(output->state, output);
+  if (head != NULL) {
+    head->x = x;
+    head->y = y;
+    wd_ui_reset_head(head, WD_FIELD_POSITION);
+  }
+}
+
+static void output_logical_size(void *data, struct zxdg_output_v1 *zxdg_output_v1,
+    int32_t width, int32_t height) {
+  struct wd_output *output = data;
+  struct wd_head *head = wd_find_head(output->state, output);
+  if (head != NULL) {
+    struct wd_mode *mode;
+    head->custom_mode.width = width;
+    head->custom_mode.height = height;
+    head->mode = NULL;
+    wl_list_for_each(mode, &head->modes, link) {
+      if (mode->width == width && mode->height == height) {
+        head->mode = mode;
+        return;
+      }
+    }
+    wd_ui_reset_head(head, WD_FIELD_MODE);
+  }
+}
+
+static void output_name(void *data, struct zxdg_output_v1 *zxdg_output_v1,
+    const char *name) {
+  struct wd_output *output = data;
+  output->name = strdup(name);
+}
+
+static const struct zxdg_output_v1_listener output_listener = {
+  .logical_position = output_logical_position,
+  .logical_size = output_logical_size,
+  .done = noop,
+  .name = output_name,
+  .description = noop
+};
+
+void wd_add_output(struct wd_state *state, struct wl_output *wl_output) {
+  struct wd_output *output = calloc(1, sizeof(*output));
+  output->state = state;
+  output->wl_output = wl_output;
+  output->xdg_output = zxdg_output_manager_v1_get_xdg_output(
+      state->xdg_output_manager, wl_output);
+  wl_list_init(&output->frames);
+  zxdg_output_v1_add_listener(output->xdg_output, &output_listener, output);
+  wl_list_insert(&output->state->outputs, &output->link);
+}
+
+void wd_remove_output(struct wd_state *state, struct wl_output *wl_output,
+    struct wl_display *display) {
+  struct wd_output *output, *output_tmp;
+  wl_list_for_each_safe(output, output_tmp, &state->outputs, link) {
+    if (output->wl_output == wl_output) {
+      wl_list_remove(&output->link);
+      wd_output_destroy(output);
+      break;
+    }
+  }
+  wd_capture_wait(state, display);
+}
+
+struct wd_output *wd_find_output(struct wd_state *state, struct wd_head
+    *head) {
+  if (!head->enabled) {
+    return NULL;
+  }
+  if (head->output != NULL) {
+    return head->output;
+  }
+  struct wd_output *output;
+  wl_list_for_each(output, &state->outputs, link) {
+    if (output->name != NULL && strcmp(output->name, head->name) == 0) {
+      head->output = output;
+      return output;
+    }
+  }
+  head->output = NULL;
+  return NULL;
+}
+
+struct wd_state *wd_state_create(void) {
+  struct wd_state *state = calloc(1, sizeof(*state));
+  state->zoom = 1.;
+  state->capture = true;
+  wl_list_init(&state->heads);
+  wl_list_init(&state->outputs);
+  return state;
+}
+
+void wd_capture_wait(struct wd_state *state, struct wl_display *display) {
+  wl_display_flush(display);
+  while (has_pending_captures(state)) {
+    if (wl_display_dispatch(display) == -1) {
+      break;
+    }
+  }
+}
+
+void wd_state_destroy(struct wd_state *state) {
+  struct wd_head *head, *head_tmp;
+  wl_list_for_each_safe(head, head_tmp, &state->heads, link) {
+    wd_head_destroy(head);
+  }
+  struct wd_output *output, *output_tmp;
+  wl_list_for_each_safe(output, output_tmp, &state->outputs, link) {
+    wd_output_destroy(output);
+  }
+  free(state);
 }

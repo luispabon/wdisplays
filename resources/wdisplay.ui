@@ -3,6 +3,14 @@
 <interface>
   <requires lib="gtk+" version="3.22"/>
   <!-- interface-css-provider-path style.css -->
+  <object class="GtkAdjustment" id="canvas_horiz">
+    <property name="step_increment">1</property>
+    <property name="page_increment">10</property>
+  </object>
+  <object class="GtkAdjustment" id="canvas_vert">
+    <property name="step_increment">1</property>
+    <property name="page_increment">10</property>
+  </object>
   <object class="GtkPopover" id="main_menu">
     <property name="can_focus">False</property>
     <child>
@@ -26,6 +34,20 @@
             <property name="expand">False</property>
             <property name="fill">True</property>
             <property name="position">0</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkModelButton">
+            <property name="visible">True</property>
+            <property name="can_focus">True</property>
+            <property name="receives_default">True</property>
+            <property name="action_name">app.capture-screens</property>
+            <property name="text" translatable="yes">Show Screen Contents</property>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+            <property name="position">1</property>
           </packing>
         </child>
       </object>
@@ -112,13 +134,12 @@
                   <object class="GtkScrolledWindow" id="heads_scroll">
                     <property name="visible">True</property>
                     <property name="can_focus">True</property>
+                    <property name="hadjustment">canvas_horiz</property>
+                    <property name="vadjustment">canvas_vert</property>
+                    <property name="min_content_width">300</property>
+                    <property name="min_content_height">300</property>
                     <child>
-                      <object class="GtkLayout" id="heads_layout">
-                        <property name="visible">True</property>
-                        <property name="can_focus">False</property>
-                        <property name="width">400</property>
-                        <signal name="draw" handler="heads_draw" swapped="no"/>
-                      </object>
+                      <placeholder/>
                     </child>
                   </object>
                   <packing>
@@ -221,7 +242,7 @@
                     <property name="can_focus">True</property>
                     <property name="receives_default">True</property>
                     <property name="tooltip_text" translatable="yes">Zoom Out</property>
-                    <signal name="clicked" handler="zoom_out" swapped="no"/>
+                    <signal name="clicked" handler="zoom_out" swapped="yes"/>
                     <child>
                       <object class="GtkImage">
                         <property name="visible">True</property>
@@ -244,7 +265,7 @@
                     <property name="can_focus">True</property>
                     <property name="receives_default">True</property>
                     <property name="tooltip_text" translatable="yes">Zoom Reset</property>
-                    <signal name="clicked" handler="zoom_reset" swapped="no"/>
+                    <signal name="clicked" handler="zoom_reset" swapped="yes"/>
                     <accelerator key="0" signal="clicked" modifiers="GDK_CONTROL_MASK"/>
                   </object>
                   <packing>
@@ -260,7 +281,7 @@
                     <property name="can_focus">True</property>
                     <property name="receives_default">True</property>
                     <property name="tooltip_text" translatable="yes">Zoom In</property>
-                    <signal name="clicked" handler="zoom_in" swapped="no"/>
+                    <signal name="clicked" handler="zoom_in" swapped="yes"/>
                     <child>
                       <object class="GtkImage">
                         <property name="visible">True</property>

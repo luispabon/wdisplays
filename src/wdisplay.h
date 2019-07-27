@@ -31,16 +31,28 @@
 #ifndef WDISPLAY_WDISPLAY_H
 #define WDISPLAY_WDISPLAY_H
 
+#define HEADS_MAX 64
+#define HOVER_USECS (100 * 1000)
+
 #include <stdbool.h>
 #include <wayland-client.h>
 
+struct zxdg_output_v1;
+struct zxdg_output_manager_v1;
 struct zwlr_output_mode_v1;
 struct zwlr_output_head_v1;
 struct zwlr_output_manager_v1;
+struct zwlr_screencopy_manager_v1;
+struct zwlr_screencopy_frame_v1;
+
 struct _GtkWidget;
 typedef struct _GtkWidget GtkWidget;
 struct _GtkBuilder;
 typedef struct _GtkBuilder GtkBuilder;
+struct _GdkCursor;
+typedef struct _GdkCursor GdkCursor;
+struct _cairo_surface;
+typedef struct _cairo_surface cairo_surface_t;
 
 enum wd_head_fields {
   WD_FIELD_NAME           = 1 << 0,
@@ -52,6 +64,32 @@ enum wd_head_fields {
   WD_FIELD_MODE           = 1 << 6,
   WD_FIELD_TRANSFORM      = 1 << 7,
   WD_FIELDS_ALL           = (1 << 8) - 1
+};
+
+struct wd_output {
+  struct wd_state *state;
+  struct zxdg_output_v1 *xdg_output;
+  struct wl_output *wl_output;
+  struct wl_list link;
+
+  char *name;
+  struct wl_list frames;
+};
+
+struct wd_frame {
+  struct wd_output *output;
+  struct zwlr_screencopy_frame_v1 *wlr_frame;
+
+  struct wl_list link;
+  int capture_fd;
+  unsigned stride;
+  unsigned width;
+  unsigned height;
+  struct wl_shm_pool *pool;
+  struct wl_buffer *buffer;
+  uint8_t *pixels;
+  uint64_t tick;
+  bool y_invert;
 };
 
 struct wd_head_config {
@@ -83,6 +121,10 @@ struct wd_head {
   struct zwlr_output_head_v1 *wlr_head;
   struct wl_list link;
 
+  struct wd_output *output;
+  struct wd_render_head_data *render;
+  cairo_surface_t *surface;
+
   char *name, *description;
   int32_t phys_width, phys_height; // mm
   struct wl_list modes;
@@ -98,16 +140,69 @@ struct wd_head {
   double scale;
 };
 
+struct wd_gl_data;
+
+struct wd_render_head_data {
+  float x1;
+  float y1;
+  float x2;
+  float y2;
+
+  uint8_t *pixels;
+  unsigned tex_stride;
+  unsigned tex_width;
+  unsigned tex_height;
+  bool preview;
+  bool y_invert;
+  uint64_t updated_at;
+
+  bool hovered;
+  uint64_t transition_begin;
+};
+
+struct wd_render_data {
+  float fg_color[4];
+  float bg_color[4];
+  float border_color[4];
+  float selection_color[4];
+  unsigned int viewport_width;
+  unsigned int viewport_height;
+  unsigned int width;
+  unsigned int height;
+  int scroll_x;
+  int scroll_y;
+  int x_origin;
+  int y_origin;
+  uint64_t updated_at;
+
+  unsigned int head_count;
+  struct wd_render_head_data heads[HEADS_MAX];
+};
+
+struct wd_point {
+  double x;
+  double y;
+};
+
 struct wd_state {
+  struct zxdg_output_manager_v1 *xdg_output_manager;
   struct zwlr_output_manager_v1 *output_manager;
+  struct zwlr_screencopy_manager_v1 *copy_manager;
+  struct wl_shm *shm;
   struct wl_list heads;
+  struct wl_list outputs;
   uint32_t serial;
 
   bool apply_pending;
   bool autoapply;
+  bool capture;
   double zoom;
-  int xorigin;
-  int yorigin;
+
+  struct wd_head *clicked;
+  /* top left, bottom right */
+  struct wd_point click_offset;
+  bool panning;
+  struct wd_point pan_last;
 
   GtkWidget *header_stack;
   GtkWidget *stack_switcher;
@@ -122,13 +217,47 @@ struct wd_state {
   GtkWidget *info_bar;
   GtkWidget *info_label;
   GtkWidget *menu_button;
+
+  GdkCursor *grab_cursor;
+  GdkCursor *grabbing_cursor;
+  GdkCursor *move_cursor;
+
+  unsigned int canvas_tick;
+  struct wd_gl_data *gl_data;
+  struct wd_render_data render;
 };
+
+
+/*
+ * Creates the application state structure.
+ */
+struct wd_state *wd_state_create(void);
+
+/*
+ * Frees the application state structure.
+ */
+void wd_state_destroy(struct wd_state *state);
 
 /*
  * Displays an error message and then exits the program.
  */
 void wd_fatal_error(int status, const char *message);
 
+/*
+ * Add an output to the list of screen captured outputs.
+ */
+void wd_add_output(struct wd_state *state, struct wl_output *wl_output);
+
+/*
+ * Remove an output from the list of screen captured outputs.
+ */
+void wd_remove_output(struct wd_state *state, struct wl_output *wl_output, struct wl_display *display);
+
+/*
+ * Finds the output associated with a given head. Can return NULL if the head's
+ * output is disabled.
+ */
+struct wd_output *wd_find_output(struct wd_state *state, struct wd_head *head);
 /*
  * Starts listening for output management events from the compositor.
  */
@@ -140,6 +269,16 @@ void wd_add_output_management_listener(struct wd_state *state, struct wl_display
 void wd_apply_state(struct wd_state *state, struct wl_list *new_outputs);
 
 /*
+ * Queues capture of the next frame of all screens.
+ */
+void wd_capture_frame(struct wd_state *state);
+
+/*
+ * Blocks until all captures are finished.
+ */
+void wd_capture_wait(struct wd_state *state, struct wl_display *display);
+
+/*
  * Updates the UI stack of all heads. Does not update individual head forms.
  * Useful for when a display is plugged/unplugged and we want to add/remove
  * a page, but we don't want to wipe out user's changes on the other pages.
@@ -147,7 +286,8 @@ void wd_apply_state(struct wd_state *state, struct wl_list *new_outputs);
 void wd_ui_reset_heads(struct wd_state *state);
 
 /*
- * Updates a form with head configuration from the server. Only updates specified fields.
+ * Updates the UI form for a single head. Useful for when the compositor
+ * notifies us of updated configuration caused by another program.
  */
 void wd_ui_reset_head(const struct wd_head *head, unsigned int fields);
 
@@ -165,5 +305,18 @@ void wd_ui_apply_done(struct wd_state *state, struct wl_list *outputs);
  * Reactivates the GUI after the display configuration updates.
  */
 void wd_ui_show_error(struct wd_state *state, const char *message);
+
+/*
+ * Compiles the GL shaders.
+ */
+struct wd_gl_data *wd_gl_setup(void);
+/*
+ * Renders the GL scene.
+ */
+void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info, uint64_t tick);
+/*
+ * Destroys the GL shaders.
+ */
+void wd_gl_cleanup(struct wd_gl_data *res);
 
 #endif
