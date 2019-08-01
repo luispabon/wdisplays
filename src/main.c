@@ -24,7 +24,7 @@
 #include <gtk/gtk.h>
 #include <gdk/gdkwayland.h>
 
-#include "wdisplay.h"
+#include "wdisplays.h"
 #include "glviewport.h"
 
 __attribute__((noreturn)) void wd_fatal_error(int status, const char *message) {
@@ -1148,7 +1148,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
   state->grabbing_cursor = gdk_cursor_new_from_name(gdk_display, "grabbing");
   state->move_cursor = gdk_cursor_new_from_name(gdk_display, "move");
 
-  GtkBuilder *builder = gtk_builder_new_from_resource("/wdisplay.ui");
+  GtkBuilder *builder = gtk_builder_new_from_resource("/wdisplays.ui");
   GtkWidget *window = GTK_WIDGET(gtk_builder_get_object(builder, "heads_window"));
   state->header_stack = GTK_WIDGET(gtk_builder_get_object(builder, "header_stack"));
   state->stack_switcher = GTK_WIDGET(gtk_builder_get_object(builder, "heads_stack_switcher"));

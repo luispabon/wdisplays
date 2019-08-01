@@ -39,7 +39,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include "wdisplay.h"
+#include "wdisplays.h"
 
 #include "wlr-output-management-unstable-v1-client-protocol.h"
 #include "xdg-output-unstable-v1-client-protocol.h"
@@ -644,5 +644,9 @@ void wd_state_destroy(struct wd_state *state) {
   wl_list_for_each_safe(output, output_tmp, &state->outputs, link) {
     wd_output_destroy(output);
   }
+  zwlr_screencopy_manager_v1_destroy(state->copy_manager);
+  zwlr_output_manager_v1_destroy(state->output_manager);
+  zxdg_output_manager_v1_destroy(state->xdg_output_manager);
+  wl_shm_destroy(state->shm);
   free(state);
 }

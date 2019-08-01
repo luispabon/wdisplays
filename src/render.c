@@ -21,7 +21,7 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include "wdisplay.h"
+#include "wdisplays.h"
 
 #include <stdlib.h>
 #include <stdio.h>

@@ -8,7 +8,7 @@ assert(gdk.get_pkgconfig_variable('targets').split().contains('wayland'), 'Wayla
 epoxy = dependency('epoxy')
 
 executable(
-  'wdisplay',
+  'wdisplays',
   [
     'main.c',
     'outputs.c',

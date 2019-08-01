@@ -1,4 +1,4 @@
-project('wdisplay', 'c')
+project('wdisplays', 'c')
 
 subdir('protocol')
 subdir('resources')
