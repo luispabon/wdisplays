@@ -90,6 +90,7 @@ struct wd_frame {
   uint8_t *pixels;
   uint64_t tick;
   bool y_invert;
+  bool swap_rgb;
 };
 
 struct wd_head_config {
@@ -154,6 +155,7 @@ struct wd_render_head_data {
   unsigned tex_height;
   bool preview;
   bool y_invert;
+  bool swap_rgb;
   uint64_t updated_at;
 
   bool hovered;

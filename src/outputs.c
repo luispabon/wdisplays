@@ -174,8 +174,13 @@ static void capture_buffer(void *data,
     struct zwlr_screencopy_frame_v1 *copy_frame,
     uint32_t format, uint32_t width, uint32_t height, uint32_t stride) {
   struct wd_frame *frame = data;
-
   char *shm_name = NULL;
+
+  if (format != WL_SHM_FORMAT_ARGB8888 && format != WL_SHM_FORMAT_XRGB8888 &&
+      format != WL_SHM_FORMAT_ABGR8888 && format != WL_SHM_FORMAT_XBGR8888) {
+    goto err;
+  }
+
   if (asprintf(&shm_name, "/wd-%s", frame->output->name) == -1) {
     fprintf(stderr, "asprintf: %s\n", strerror(errno));
     shm_name = NULL;
@@ -199,6 +204,8 @@ static void capture_buffer(void *data,
   frame->stride = stride;
   frame->width = width;
   frame->height = height;
+  frame->swap_rgb = format == WL_SHM_FORMAT_ABGR8888
+    || format == WL_SHM_FORMAT_XBGR8888;
 
   return;
 err:

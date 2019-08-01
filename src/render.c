@@ -53,6 +53,7 @@ struct wd_gl_data {
   GLuint texture_uv_attribute;
   GLuint texture_screen_size_uniform;
   GLuint texture_texture_uniform;
+  GLuint texture_color_transform_uniform;
 
   GLuint buffers[2];
 
@@ -93,8 +94,9 @@ void main(void) {\n\
 static const char *texture_fragment_shader_src = "\
 varying vec2 uv_out;\n\
 uniform sampler2D texture;\n\
+uniform mat4 color_transform;\n\
 void main(void) {\n\
-  gl_FragColor = texture2D(texture, uv_out);\n\
+  gl_FragColor = texture2D(texture, uv_out) * color_transform;\n\
 }";
 
 static GLuint gl_make_shader(GLenum type, const char *src) {
@@ -182,6 +184,8 @@ struct wd_gl_data *wd_gl_setup(void) {
       "screen_size");
   res->texture_texture_uniform = glGetUniformLocation(res->texture_program,
       "texture");
+  res->texture_color_transform_uniform = glGetUniformLocation(
+      res->texture_program, "color_transform");
 
   glGenBuffers(2, res->buffers);
   glBindBuffer(GL_ARRAY_BUFFER, res->buffers[0]);
@@ -194,6 +198,18 @@ struct wd_gl_data *wd_gl_setup(void) {
 
   return res;
 }
+
+static const GLfloat TRANSFORM_RGB[16] = {
+  1, 0, 0, 0,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+  0, 0, 0, 1};
+
+static const GLfloat TRANSFORM_BGR[16] = {
+  0, 0, 1, 0,
+  0, 1, 0, 0,
+  1, 0, 0, 0,
+  0, 0, 0, 1};
 
 #define PUSH_POINT(_start, _a, _b) \
     *((_start)++) = (_a);\
@@ -278,6 +294,8 @@ void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
             0, GL_RGBA, GL_UNSIGNED_BYTE, head->pixels);
         glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, 0);
       }
+      glUniformMatrix4fv(res->texture_color_transform_uniform, 1, GL_FALSE,
+        head->swap_rgb ? TRANSFORM_RGB : TRANSFORM_BGR);
       glDrawArrays(GL_TRIANGLES, i * 6, 6);
     }
   }

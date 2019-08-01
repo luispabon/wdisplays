@@ -824,6 +824,7 @@ static void canvas_render(GtkGLArea *area, GdkGLContext *context, gpointer data)
           render->preview = true;
           render->updated_at = tick;
           render->y_invert = frame->y_invert;
+          render->swap_rgb = frame->swap_rgb;
         }
       } else if (render->preview
           || render->pixels == NULL || size_changed(render)) {
@@ -839,6 +840,7 @@ static void canvas_render(GtkGLArea *area, GdkGLContext *context, gpointer data)
         render->tex_stride = cairo_image_surface_get_stride(head->surface);
         render->updated_at = tick;
         render->y_invert = false;
+        render->swap_rgb = false;
       }
     }
   }
