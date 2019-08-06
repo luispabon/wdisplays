@@ -479,7 +479,7 @@ static void output_manager_handle_head(void *data,
   head->wlr_head = wlr_head;
   head->scale = 1.0;
   wl_list_init(&head->modes);
-  wl_list_insert(&state->heads, &head->link);
+  wl_list_insert(state->heads.prev, &head->link);
 
   zwlr_output_head_v1_add_listener(wlr_head, &head_listener, head);
 }
@@ -595,7 +595,7 @@ void wd_add_output(struct wd_state *state, struct wl_output *wl_output) {
       state->xdg_output_manager, wl_output);
   wl_list_init(&output->frames);
   zxdg_output_v1_add_listener(output->xdg_output, &output_listener, output);
-  wl_list_insert(&output->state->outputs, &output->link);
+  wl_list_insert(output->state->outputs.prev, &output->link);
 }
 
 void wd_remove_output(struct wd_state *state, struct wl_output *wl_output,
