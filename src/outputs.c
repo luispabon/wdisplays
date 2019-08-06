@@ -131,22 +131,23 @@ void wd_apply_state(struct wd_state *state, struct wl_list *new_outputs) {
       }
     }
     if (selected_mode != NULL) {
-      if (selected_mode != head->mode) {
+      if (output->enabled != head->enabled || selected_mode != head->mode) {
         zwlr_output_configuration_head_v1_set_mode(config_head, selected_mode->wlr_mode);
       }
-    } else if (output->width != head->custom_mode.width
+    } else if (output->enabled != head->enabled
+        || output->width != head->custom_mode.width
         || output->height != head->custom_mode.height
         || output->refresh != head->custom_mode.refresh) {
       zwlr_output_configuration_head_v1_set_custom_mode(config_head,
           output->width, output->height, output->refresh);
     }
-    if (output->x != head->x || output->y != head->y) {
+    if (output->enabled != head->enabled || output->x != head->x || output->y != head->y) {
       zwlr_output_configuration_head_v1_set_position(config_head, output->x, output->y);
     }
-    if (output->scale != head->scale) {
+    if (output->enabled != head->enabled || output->scale != head->scale) {
       zwlr_output_configuration_head_v1_set_scale(config_head, wl_fixed_from_double(output->scale));
     }
-    if (output->transform != head->transform) {
+    if (output->enabled != head->enabled || output->transform != head->transform) {
       zwlr_output_configuration_head_v1_set_transform(config_head, output->transform);
     }
   }
