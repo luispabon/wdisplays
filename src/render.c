@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <epoxy/gl.h>
+#include <wayland-util.h>
 
 #define CANVAS_MARGIN 100
 
@@ -228,10 +229,15 @@ void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
     uint64_t tick) {
   unsigned int tris = 0;
 
-  if (info->head_count > res->texture_count) {
-    glGenTextures(info->head_count - res->texture_count,
+  unsigned int head_count = wl_list_length(&info->heads);
+  if (head_count >= HEADS_MAX) {
+    head_count = HEADS_MAX;
+  }
+
+  if (head_count > res->texture_count) {
+    glGenTextures(head_count - res->texture_count,
         res->textures + res->texture_count);
-    for (int i = res->texture_count; i < info->head_count; i++) {
+    for (int i = res->texture_count; i < head_count; i++) {
       glBindTexture(GL_TEXTURE_2D, res->textures[i]);
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -239,11 +245,12 @@ void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
     glBindTexture(GL_TEXTURE_2D, 0);
-    res->texture_count = info->head_count;
+    res->texture_count = head_count;
   }
 
-  for (int i = 0; i < info->head_count; i++) {
-    struct wd_render_head_data *head = &info->heads[i];
+  struct wd_render_head_data *head;
+  int i = 0;
+  wl_list_for_each_reverse(head, &info->heads, link) {
     float *tri_ptr = res->tris + i * BT_UV_QUAD_SIZE;
     float x1 = head->x1;
     float y1 = head->y1;
@@ -261,6 +268,10 @@ void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
     PUSH_POINT_UV(tri_ptr, x2, y2, 1.f, t2)
 
     tris += 6;
+    i++;
+    if (i >= HEADS_MAX) {
+      break;
+    }
   }
 
   glClearColor(info->bg_color[0], info->bg_color[1], info->bg_color[2], 1.f);
@@ -284,8 +295,8 @@ void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
     glUniform1i(res->texture_texture_uniform, 0);
     glActiveTexture(GL_TEXTURE0);
 
-    for (int i = 0; i < info->head_count; i++) {
-      struct wd_render_head_data *head = &info->heads[i];
+    i = 0;
+    wl_list_for_each_reverse(head, &info->heads, link) {
       glBindTexture(GL_TEXTURE_2D, res->textures[i]);
       if (head->updated_at == tick) {
         glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, head->tex_stride / 4);
@@ -297,14 +308,18 @@ void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
       glUniformMatrix4fv(res->texture_color_transform_uniform, 1, GL_FALSE,
         head->swap_rgb ? TRANSFORM_RGB : TRANSFORM_BGR);
       glDrawArrays(GL_TRIANGLES, i * 6, 6);
+      i++;
+      if (i >= HEADS_MAX) {
+        break;
+      }
     }
   }
 
   tris = 0;
 
   int j = 0;
-  for (int i = 0; i < info->head_count; i++) {
-    struct wd_render_head_data *head = &info->heads[i];
+  i = 0;
+  wl_list_for_each_reverse(head, &info->heads, link) {
     if (head->hovered || tick < head->transition_begin + HOVER_USECS) {
       float *tri_ptr = res->tris + j++ * BT_COLOR_QUAD_SIZE;
       float x1 = head->x1;
@@ -342,6 +357,10 @@ void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
       PUSH_COLOR(tri_ptr, color[0], color[1], color[2], alpha)
 
       tris += 6;
+    }
+    i++;
+    if (i >= HEADS_MAX) {
+      break;
     }
   }
 

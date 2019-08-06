@@ -312,10 +312,15 @@ static void wd_mode_destroy(struct wd_mode* mode) {
 }
 
 static void wd_head_destroy(struct wd_head *head) {
-  struct wd_mode *mode, *mode_tmp;
-  if (head->state->clicked == head) {
+  if (head->state->clicked == head->render) {
     head->state->clicked = NULL;
   }
+  if (head->render != NULL) {
+    wl_list_remove(&head->render->link);
+    free(head->render);
+    head->render = NULL;
+  }
+  struct wd_mode *mode, *mode_tmp;
   wl_list_for_each_safe(mode, mode_tmp, &head->modes, link) {
     zwlr_output_mode_v1_destroy(mode->wlr_mode);
     free(mode);
@@ -630,6 +635,7 @@ struct wd_state *wd_state_create(void) {
   state->capture = true;
   wl_list_init(&state->heads);
   wl_list_init(&state->outputs);
+  wl_list_init(&state->render.heads);
   return state;
 }
 

@@ -144,6 +144,8 @@ struct wd_head {
 struct wd_gl_data;
 
 struct wd_render_head_data {
+  struct wl_list link;
+
   float x1;
   float y1;
   float x2;
@@ -177,8 +179,7 @@ struct wd_render_data {
   int y_origin;
   uint64_t updated_at;
 
-  unsigned int head_count;
-  struct wd_render_head_data heads[HEADS_MAX];
+  struct wl_list heads;
 };
 
 struct wd_point {
@@ -200,7 +201,7 @@ struct wd_state {
   bool capture;
   double zoom;
 
-  struct wd_head *clicked;
+  struct wd_render_head_data *clicked;
   /* top left, bottom right */
   struct wd_point click_offset;
   bool panning;

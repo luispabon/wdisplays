@@ -248,9 +248,9 @@ static gboolean redraw_canvas(GtkWidget *widget, GdkFrameClock *frame_clock, gpo
 
 static void update_tick_callback(struct wd_state *state) {
   bool any_animate = false;
-  for (int i = 0; i < state->render.head_count; i++) {
-    struct wd_render_head_data *head = &state->render.heads[i];
-    if (state->render.updated_at < head->transition_begin + HOVER_USECS) {
+  struct wd_render_head_data *render;
+  wl_list_for_each(render, &state->render.heads, link) {
+    if (state->render.updated_at < render->transition_begin + HOVER_USECS) {
       any_animate = true;
       break;
     }
@@ -299,31 +299,34 @@ static void update_hovered(struct wd_state *state) {
   GdkFrameClock *clock = gtk_widget_get_frame_clock(state->canvas);
   uint64_t tick = gdk_frame_clock_get_frame_time(clock);
   g_autoptr(GList) seats = gdk_display_list_seats(display);
-  struct wd_head *head;
-  wl_list_for_each(head, &state->heads, link) {
-    struct wd_render_head_data *render = head->render;
-    if (render != NULL) {
-      bool init_hovered = render->hovered;
-      render->hovered = false;
-      if (state->clicked == head) {
-        render->hovered = true;
-      } else if (state->clicked == NULL) {
-        for (GList *iter = seats; iter != NULL; iter = iter->next) {
-          double mouse_x;
-          double mouse_y;
+  bool any_hovered = false;
+  struct wd_render_head_data *render;
+  wl_list_for_each(render, &state->render.heads, link) {
+    bool init_hovered = render->hovered;
+    render->hovered = false;
+    if (any_hovered) {
+      continue;
+    }
+    if (state->clicked == render) {
+      render->hovered = true;
+      any_hovered = true;
+    } else if (state->clicked == NULL) {
+      for (GList *iter = seats; iter != NULL; iter = iter->next) {
+        double mouse_x;
+        double mouse_y;
 
-          GdkDevice *pointer = gdk_seat_get_pointer(GDK_SEAT(iter->data));
-          gdk_window_get_device_position_double(window, pointer, &mouse_x, &mouse_y, NULL);
-          if (mouse_x >= render->x1 && mouse_x < render->x2 &&
-              mouse_y >= render->y1 && mouse_y < render->y2) {
-            render->hovered = true;
-            break;
-          }
+        GdkDevice *pointer = gdk_seat_get_pointer(GDK_SEAT(iter->data));
+        gdk_window_get_device_position_double(window, pointer, &mouse_x, &mouse_y, NULL);
+        if (mouse_x >= render->x1 && mouse_x < render->x2 &&
+            mouse_y >= render->y1 && mouse_y < render->y2) {
+          render->hovered = true;
+          any_hovered = true;
+          break;
         }
       }
-      if (init_hovered != render->hovered) {
-        render->transition_begin = tick;
-      }
+    }
+    if (init_hovered != render->hovered) {
+      render->transition_begin = tick;
     }
   }
   update_cursor(state);
@@ -353,7 +356,6 @@ static void queue_canvas_draw(struct wd_state *state) {
 
   cache_scroll(state);
 
-  state->render.head_count = 0;
   g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
   for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
     GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form_iter->data), "builder"));
@@ -368,16 +370,15 @@ static void queue_canvas_draw(struct wd_state *state) {
         scale = 1.;
 
       struct wd_head *head = g_object_get_data(G_OBJECT(form_iter->data), "head");
-      struct wd_render_head_data *render = &state->render.heads[state->render.head_count];
+      if (head->render == NULL) {
+        head->render = calloc(1, sizeof(*head->render));
+        wl_list_insert(&state->render.heads, &head->render->link);
+      }
+      struct wd_render_head_data *render = head->render;
       render->x1 = floor(x * state->zoom - state->render.scroll_x - state->render.x_origin);
       render->y1 = floor(y * state->zoom - state->render.scroll_y - state->render.y_origin);
       render->x2 = floor(render->x1 + w * state->zoom / scale);
       render->y2 = floor(render->y1 + h * state->zoom / scale);
-      head->render = render;
-
-      state->render.head_count++;
-      if (state->render.head_count >= HEADS_MAX)
-        break;
     }
   }
   gtk_gl_area_queue_render(GTK_GL_AREA(state->canvas));
@@ -869,8 +870,8 @@ static gboolean canvas_click(GtkWidget *widget, GdkEvent *event,
   struct wd_state *state = data;
   if (event->button.type == GDK_BUTTON_PRESS) {
     if (event->button.button == 1) {
-      int i = 0;
       struct wd_head *head;
+      state->clicked = NULL;
       wl_list_for_each(head, &state->heads, link) {
         struct wd_render_head_data *render = head->render;
         if (render != NULL) {
@@ -878,19 +879,27 @@ static gboolean canvas_click(GtkWidget *widget, GdkEvent *event,
           double mouse_y = event->button.y;
           if (mouse_x >= render->x1 && mouse_x < render->x2 &&
               mouse_y >= render->y1 && mouse_y < render->y2) {
-            state->clicked = head;
+            state->clicked = render;
             state->click_offset.x = event->button.x - render->x1;
             state->click_offset.y = event->button.y - render->y1;
             break;
           }
         }
-        i++;
       }
       if (state->clicked != NULL) {
+        wl_list_remove(&state->clicked->link);
+        wl_list_insert(&state->render.heads, &state->clicked->link);
+
+        struct wd_render_head_data *render;
+        wl_list_for_each(render, &state->render.heads, link) {
+          render->updated_at = 0;
+          render->preview = true;
+        }
+        gtk_gl_area_queue_render(GTK_GL_AREA(state->canvas));
         g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
         for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
           const struct wd_head *other = g_object_get_data(G_OBJECT(form_iter->data), "head");
-          if (state->clicked == other) {
+          if (state->clicked == other->render) {
             gtk_stack_set_visible_child(GTK_STACK(state->stack), form_iter->data);
             break;
           }
@@ -939,7 +948,7 @@ static gboolean canvas_motion(GtkWidget *widget, GdkEvent *event,
     g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
     for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
       const struct wd_head *other = g_object_get_data(G_OBJECT(form_iter->data), "head");
-      if (state->clicked == other) {
+      if (state->clicked == other->render) {
         form = form_iter->data;
         break;
       }
@@ -965,7 +974,7 @@ static gboolean canvas_motion(GtkWidget *widget, GdkEvent *event,
 
       for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
         const struct wd_head *other = g_object_get_data(G_OBJECT(form_iter->data), "head");
-        if (other != state->clicked && !(event->motion.state & GDK_SHIFT_MASK)) {
+        if (other->render != state->clicked && !(event->motion.state & GDK_SHIFT_MASK)) {
           GtkBuilder *other_builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form_iter->data), "builder"));
           double x1 = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(other_builder, "pos_x")));
           double y1 = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(other_builder, "pos_y")));
@@ -1024,9 +1033,9 @@ static gboolean canvas_enter(GtkWidget *widget, GdkEvent *event,
 static gboolean canvas_leave(GtkWidget *widget, GdkEvent *event,
     gpointer data) {
   struct wd_state *state = data;
-  for (int i = 0; i < state->render.head_count; i++) {
-    struct wd_render_head_data *head = &state->render.heads[i];
-    head->hovered = false;
+  struct wd_render_head_data *render;
+  wl_list_for_each(render, &state->render.heads, link) {
+    render->hovered = false;
   }
   update_tick_callback(state);
   return TRUE;
