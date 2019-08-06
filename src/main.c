@@ -491,7 +491,7 @@ static void update_head_form(GtkWidget *form, unsigned int fields) {
   const struct wd_head *head = g_object_get_data(G_OBJECT(form), "head");
 
   if (fields & WD_FIELD_NAME) {
-    gtk_container_child_set(GTK_CONTAINER(head->state->stack), form, "name", head->name, "title", head->name, NULL);
+    gtk_container_child_set(GTK_CONTAINER(head->state->stack), form, "title", head->name, NULL);
   }
   if (fields & WD_FIELD_DESCRIPTION) {
     gtk_label_set_text(GTK_LABEL(description), head->description);
@@ -584,6 +584,7 @@ void wd_ui_reset_heads(struct wd_state *state) {
   g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
   GList *form_iter = forms;
   struct wd_head *head;
+  int i = 0;
   wl_list_for_each(head, &state->heads, link) {
     GtkBuilder *builder;
     GtkWidget *form;
@@ -592,7 +593,8 @@ void wd_ui_reset_heads(struct wd_state *state) {
       form = GTK_WIDGET(gtk_builder_get_object(builder, "form"));
       g_object_set_data(G_OBJECT(form), "builder", builder);
       g_object_set_data(G_OBJECT(form), "head", head);
-      gtk_stack_add_titled(GTK_STACK(state->stack), form, head->name, head->name);
+      g_autofree gchar *page_name = g_strdup_printf("%d", i);
+      gtk_stack_add_titled(GTK_STACK(state->stack), form, page_name, head->name);
 
       GtkWidget *mode_button = GTK_WIDGET(gtk_builder_get_object(builder, "mode_button"));
       GtkWidget *rotate_button = GTK_WIDGET(gtk_builder_get_object(builder, "rotate_button"));
@@ -634,6 +636,7 @@ void wd_ui_reset_heads(struct wd_state *state) {
       g_object_set_data(G_OBJECT(form), "head", head);
       form_iter = form_iter->next;
     }
+    i++;
   }
   // remove everything else
   for (; form_iter != NULL; form_iter = form_iter->next) {
