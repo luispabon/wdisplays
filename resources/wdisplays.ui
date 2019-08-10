@@ -211,7 +211,6 @@
             <property name="no_show_all">True</property>
             <property name="hexpand">True</property>
             <property name="vexpand">True</property>
-            <property name="active">True</property>
           </object>
           <packing>
             <property name="pass_through">True</property>

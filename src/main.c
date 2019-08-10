@@ -160,6 +160,7 @@ static void apply_state(struct wd_state *state) {
   if (!state->autoapply) {
     gtk_style_context_add_class(gtk_widget_get_style_context(state->spinner), "visible");
     gtk_overlay_set_overlay_pass_through(GTK_OVERLAY(state->overlay), state->spinner, FALSE);
+    gtk_spinner_start(GTK_SPINNER(state->spinner));
 
     gtk_widget_set_sensitive(state->stack_switcher, FALSE);
     gtk_widget_set_sensitive(state->stack, FALSE);
@@ -677,6 +678,7 @@ void wd_ui_reset_all(struct wd_state *state) {
 void wd_ui_apply_done(struct wd_state *state, struct wl_list *outputs) {
   gtk_style_context_remove_class(gtk_widget_get_style_context(state->spinner), "visible");
   gtk_overlay_set_overlay_pass_through(GTK_OVERLAY(state->overlay), state->spinner, TRUE);
+  gtk_spinner_stop(GTK_SPINNER(state->spinner));
 
   gtk_widget_set_sensitive(state->stack_switcher, TRUE);
   gtk_widget_set_sensitive(state->stack, TRUE);
