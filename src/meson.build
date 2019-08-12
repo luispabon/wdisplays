@@ -14,6 +14,7 @@ executable(
     'outputs.c',
     'render.c',
     'glviewport.c',
+    'overlay.c',
     resources,
   ],
   dependencies : [

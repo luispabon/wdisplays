@@ -8,12 +8,9 @@ spinner.visible {
   opacity: 1;
 }
 
-.head {
-  border: 1px solid @borders;
-  border-radius: 1px;
-  background-color: @theme_bg_color;
-  transition: background-color 200ms ease-in-out;
-}
-.head:hover {
+.output-overlay {
   background-color: @theme_selected_bg_color;
+  color: @theme_selected_fg_color;
+  border-radius: 8px;
+  opacity: 0.9;
 }

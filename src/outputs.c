@@ -1,4 +1,3 @@
-
 /*
  * Copyright (C) 2019 cyclopsian
  * Copyright (C) 2017-2019 emersion
@@ -34,6 +33,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
+#include <stdarg.h>
 
 #include <sys/mman.h>
 #include <fcntl.h>
@@ -44,6 +44,7 @@
 #include "wlr-output-management-unstable-v1-client-protocol.h"
 #include "xdg-output-unstable-v1-client-protocol.h"
 #include "wlr-screencopy-unstable-v1-client-protocol.h"
+#include "wlr-layer-shell-unstable-v1-client-protocol.h"
 
 static void noop() {
   // This space is intentionally left blank
@@ -171,32 +172,54 @@ static void wd_frame_destroy(struct wd_frame *frame) {
   free(frame);
 }
 
+static int create_shm_file(size_t size, const char *fmt, ...) {
+  char *shm_name = NULL;
+  int fd = -1;
+
+  va_list vl;
+  va_start(vl, fmt);
+  int result = vasprintf(&shm_name, fmt, vl);
+  va_end(vl);
+
+  if (result == -1) {
+    fprintf(stderr, "asprintf: %s\n", strerror(errno));
+    shm_name = NULL;
+    return -1;
+  }
+
+  fd = shm_open(shm_name, O_CREAT | O_RDWR, 0);
+  if (fd == -1) {
+    fprintf(stderr, "shm_open: %s\n", strerror(errno));
+    free(shm_name);
+    return -1;
+  }
+  shm_unlink(shm_name);
+  free(shm_name);
+
+  if (ftruncate(fd, size) == -1) {
+    fprintf(stderr, "ftruncate: %s\n", strerror(errno));
+    close(fd);
+    return -1;
+  }
+  return fd;
+}
+
 static void capture_buffer(void *data,
     struct zwlr_screencopy_frame_v1 *copy_frame,
     uint32_t format, uint32_t width, uint32_t height, uint32_t stride) {
   struct wd_frame *frame = data;
-  char *shm_name = NULL;
 
   if (format != WL_SHM_FORMAT_ARGB8888 && format != WL_SHM_FORMAT_XRGB8888 &&
       format != WL_SHM_FORMAT_ABGR8888 && format != WL_SHM_FORMAT_XBGR8888) {
     goto err;
   }
 
-  if (asprintf(&shm_name, "/wd-%s", frame->output->name) == -1) {
-    fprintf(stderr, "asprintf: %s\n", strerror(errno));
-    shm_name = NULL;
-    goto err;
-  }
-  frame->capture_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0);
-  if (frame->capture_fd == -1) {
-    fprintf(stderr, "shm_open: %s\n", strerror(errno));
-    goto err;
-  }
-  shm_unlink(shm_name);
-  free(shm_name);
-
   size_t size = stride * height;
-  ftruncate(frame->capture_fd, size);
+  frame->capture_fd = create_shm_file(size, "/wd-%s", frame->output->name);
+  if (frame->capture_fd == -1) {
+    goto err;
+  }
+
   frame->pool = wl_shm_create_pool(frame->output->state->shm,
       frame->capture_fd, size);
   frame->buffer = wl_shm_pool_create_buffer(frame->pool, 0,
@@ -210,9 +233,6 @@ static void capture_buffer(void *data,
 
   return;
 err:
-  if (shm_name != NULL) {
-    free(shm_name);
-  }
   wd_frame_destroy(frame);
 }
 
@@ -301,6 +321,9 @@ static void wd_output_destroy(struct wd_output *output) {
   struct wd_frame *frame, *frame_tmp;
   wl_list_for_each_safe(frame, frame_tmp, &output->frames, link) {
     wd_frame_destroy(frame);
+  }
+  if (output->state->layer_shell != NULL) {
+    wd_destroy_overlay(output);
   }
   zxdg_output_v1_destroy(output->xdg_output);
   free(output->name);
@@ -452,8 +475,20 @@ static void head_handle_scale(void *data,
 static void head_handle_finished(void *data,
     struct zwlr_output_head_v1 *wlr_head) {
   struct wd_head *head = data;
+  struct wd_state *state = head->state;
   wl_list_remove(&head->link);
   wd_head_destroy(head);
+
+  uint32_t counter = 0;
+  wl_list_for_each(head, &state->heads, link) {
+    if (head->id != counter) {
+      head->id = counter;
+      if (head->output != NULL) {
+        wd_redraw_overlay(head->output);
+      }
+    }
+    counter++;
+  }
 }
 
 static const struct zwlr_output_head_v1_listener head_listener = {
@@ -478,6 +513,7 @@ static void output_manager_handle_head(void *data,
   head->state = state;
   head->wlr_head = wlr_head;
   head->scale = 1.0;
+  head->id = wl_list_length(&state->heads);
   wl_list_init(&head->modes);
   wl_list_insert(state->heads.prev, &head->link);
 
@@ -513,6 +549,9 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
   } else if(strcmp(interface, zwlr_screencopy_manager_v1_interface.name) == 0) {
     state->copy_manager = wl_registry_bind(registry, name,
         &zwlr_screencopy_manager_v1_interface, version);
+  } else if(strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
+    state->layer_shell = wl_registry_bind(registry, name,
+        &zwlr_layer_shell_v1_interface, version);
   } else if(strcmp(interface, wl_shm_interface.name) == 0) {
     state->shm = wl_registry_bind(registry, name, &wl_shm_interface, version);
   }
@@ -532,11 +571,12 @@ void wd_add_output_management_listener(struct wd_state *state, struct
   wl_display_roundtrip(display);
 }
 
-static struct wd_head *wd_find_head(struct wd_state *state,
+struct wd_head *wd_find_head(struct wd_state *state,
     struct wd_output *output) {
   struct wd_head *head;
   wl_list_for_each(head, &state->heads, link) {
     if (output->name != NULL && strcmp(output->name, head->name) == 0) {
+      head->output = output;
       return head;
     }
   }
@@ -576,7 +616,14 @@ static void output_logical_size(void *data, struct zxdg_output_v1 *zxdg_output_v
 static void output_name(void *data, struct zxdg_output_v1 *zxdg_output_v1,
     const char *name) {
   struct wd_output *output = data;
+  if (output->name != NULL) {
+    free(output->name);
+  }
   output->name = strdup(name);
+  struct wd_head *head = wd_find_head(output->state, output);
+  if (head != NULL) {
+    wd_ui_reset_head(head, WD_FIELD_NAME);
+  }
 }
 
 static const struct zxdg_output_v1_listener output_listener = {
@@ -587,7 +634,8 @@ static const struct zxdg_output_v1_listener output_listener = {
   .description = noop
 };
 
-void wd_add_output(struct wd_state *state, struct wl_output *wl_output) {
+void wd_add_output(struct wd_state *state, struct wl_output *wl_output,
+    struct wl_display *display) {
   struct wd_output *output = calloc(1, sizeof(*output));
   output->state = state;
   output->wl_output = wl_output;
@@ -596,6 +644,10 @@ void wd_add_output(struct wd_state *state, struct wl_output *wl_output) {
   wl_list_init(&output->frames);
   zxdg_output_v1_add_listener(output->xdg_output, &output_listener, output);
   wl_list_insert(output->state->outputs.prev, &output->link);
+  if (state->layer_shell != NULL && state->show_overlay) {
+    wl_display_roundtrip(display);
+    wd_create_overlay(output);
+  }
 }
 
 void wd_remove_output(struct wd_state *state, struct wl_output *wl_output,
@@ -634,6 +686,7 @@ struct wd_state *wd_state_create(void) {
   struct wd_state *state = calloc(1, sizeof(*state));
   state->zoom = 1.;
   state->capture = true;
+  state->show_overlay = true;
   wl_list_init(&state->heads);
   wl_list_init(&state->outputs);
   wl_list_init(&state->render.heads);
@@ -658,7 +711,12 @@ void wd_state_destroy(struct wd_state *state) {
   wl_list_for_each_safe(output, output_tmp, &state->outputs, link) {
     wd_output_destroy(output);
   }
-  zwlr_screencopy_manager_v1_destroy(state->copy_manager);
+  if (state->layer_shell != NULL) {
+    zwlr_layer_shell_v1_destroy(state->layer_shell);
+  }
+  if (state->copy_manager != NULL) {
+    zwlr_screencopy_manager_v1_destroy(state->copy_manager);
+  }
   zwlr_output_manager_v1_destroy(state->output_manager);
   zxdg_output_manager_v1_destroy(state->xdg_output_manager);
   wl_shm_destroy(state->shm);

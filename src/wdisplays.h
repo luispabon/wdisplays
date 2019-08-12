@@ -44,6 +44,8 @@ struct zwlr_output_head_v1;
 struct zwlr_output_manager_v1;
 struct zwlr_screencopy_manager_v1;
 struct zwlr_screencopy_frame_v1;
+struct zwlr_layer_shell_v1;
+struct zwlr_layer_surface_v1;
 
 struct _GtkWidget;
 typedef struct _GtkWidget GtkWidget;
@@ -74,6 +76,8 @@ struct wd_output {
 
   char *name;
   struct wl_list frames;
+  GtkWidget *overlay_window;
+  struct zwlr_layer_surface_v1 *overlay_layer_surface;
 };
 
 struct wd_frame {
@@ -126,6 +130,7 @@ struct wd_head {
   struct wd_render_head_data *render;
   cairo_surface_t *surface;
 
+  uint32_t id;
   char *name, *description;
   int32_t phys_width, phys_height; // mm
   struct wl_list modes;
@@ -191,6 +196,7 @@ struct wd_state {
   struct zxdg_output_manager_v1 *xdg_output_manager;
   struct zwlr_output_manager_v1 *output_manager;
   struct zwlr_screencopy_manager_v1 *copy_manager;
+  struct zwlr_layer_shell_v1 *layer_shell;
   struct wl_shm *shm;
   struct wl_list heads;
   struct wl_list outputs;
@@ -199,6 +205,7 @@ struct wd_state {
   bool apply_pending;
   bool autoapply;
   bool capture;
+  bool show_overlay;
   double zoom;
 
   struct wd_render_head_data *clicked;
@@ -249,7 +256,7 @@ void wd_fatal_error(int status, const char *message);
 /*
  * Add an output to the list of screen captured outputs.
  */
-void wd_add_output(struct wd_state *state, struct wl_output *wl_output);
+void wd_add_output(struct wd_state *state, struct wl_output *wl_output, struct wl_display *display);
 
 /*
  * Remove an output from the list of screen captured outputs.
@@ -261,6 +268,11 @@ void wd_remove_output(struct wd_state *state, struct wl_output *wl_output, struc
  * output is disabled.
  */
 struct wd_output *wd_find_output(struct wd_state *state, struct wd_head *head);
+
+/*
+ * Finds the head associated with a given output.
+ */
+struct wd_head *wd_find_head(struct wd_state *state, struct wd_output *output);
 /*
  * Starts listening for output management events from the compositor.
  */
@@ -313,13 +325,31 @@ void wd_ui_show_error(struct wd_state *state, const char *message);
  * Compiles the GL shaders.
  */
 struct wd_gl_data *wd_gl_setup(void);
+
 /*
  * Renders the GL scene.
  */
 void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info, uint64_t tick);
+
 /*
  * Destroys the GL shaders.
  */
 void wd_gl_cleanup(struct wd_gl_data *res);
+
+/*
+ * Create an overlay on the screen that contains a textual description of the
+ * output. This is to help the user identify the outputs visually.
+ */
+void wd_create_overlay(struct wd_output *output);
+
+/*
+ * Forces redrawing of the screen overlay on the given output.
+ */
+void wd_redraw_overlay(struct wd_output *output);
+
+/*
+ * Destroys the screen overlay on the given output.
+ */
+void wd_destroy_overlay(struct wd_output *output);
 
 #endif

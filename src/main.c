@@ -708,7 +708,8 @@ static void cleanup(GtkWidget *window, gpointer data) {
 }
 
 static void monitor_added(GdkDisplay *display, GdkMonitor *monitor, gpointer data) {
-  wd_add_output(data, gdk_wayland_monitor_get_wl_output(monitor));
+  struct wl_display *wl_display = gdk_wayland_display_get_wl_display(display);
+  wd_add_output(data, gdk_wayland_monitor_get_wl_output(monitor), wl_display);
 }
 
 static void monitor_removed(GdkDisplay *display, GdkMonitor *monitor, gpointer data) {
@@ -1145,6 +1146,21 @@ static void capture_selected(GSimpleAction *action, GVariant *param, gpointer da
   update_tick_callback(state);
 }
 
+static void overlay_selected(GSimpleAction *action, GVariant *param, gpointer data) {
+  struct wd_state *state = data;
+  state->show_overlay = !state->show_overlay;
+  g_simple_action_set_state(action, g_variant_new_boolean(state->show_overlay));
+
+  struct wd_output *output;
+  wl_list_for_each(output, &state->outputs, link) {
+    if (state->show_overlay) {
+      wd_create_overlay(output);
+    } else {
+      wd_destroy_overlay(output);
+    }
+  }
+}
+
 static void activate(GtkApplication* app, gpointer user_data) {
   GdkDisplay *gdk_display = gdk_display_get_default();
   if (!GDK_IS_WAYLAND_DISPLAY(gdk_display)) {
@@ -1229,6 +1245,11 @@ static void activate(GtkApplication* app, gpointer user_data) {
   g_signal_connect(capture_action, "activate", G_CALLBACK(capture_selected), state);
   g_action_map_add_action(G_ACTION_MAP(main_actions), G_ACTION(capture_action));
 
+  GSimpleAction *overlay_action = g_simple_action_new_stateful("show-overlay", NULL,
+      g_variant_new_boolean(state->show_overlay));
+  g_signal_connect(overlay_action, "activate", G_CALLBACK(overlay_selected), state);
+  g_action_map_add_action(G_ACTION_MAP(main_actions), G_ACTION(overlay_action));
+
   /* first child of GtkInfoBar is always GtkRevealer */
   g_autoptr(GList) info_children = gtk_container_get_children(GTK_CONTAINER(state->info_bar));
   g_signal_connect(info_children->data, "notify::child-revealed", G_CALLBACK(info_bar_animation_done), state);
@@ -1247,11 +1268,16 @@ static void activate(GtkApplication* app, gpointer user_data) {
     g_simple_action_set_state(capture_action, g_variant_new_boolean(state->capture));
     g_simple_action_set_enabled(capture_action, FALSE);
   }
+  if (state->layer_shell == NULL) {
+    state->show_overlay = false;
+    g_simple_action_set_state(overlay_action, g_variant_new_boolean(state->show_overlay));
+    g_simple_action_set_enabled(overlay_action, FALSE);
+  }
 
   int n_monitors = gdk_display_get_n_monitors(gdk_display);
   for (int i = 0; i < n_monitors; i++) {
     GdkMonitor *monitor = gdk_display_get_monitor(gdk_display, i);
-    wd_add_output(state, gdk_wayland_monitor_get_wl_output(monitor));
+    wd_add_output(state, gdk_wayland_monitor_get_wl_output(monitor), display);
   }
 
   g_signal_connect(gdk_display, "monitor-added", G_CALLBACK(monitor_added), state);
