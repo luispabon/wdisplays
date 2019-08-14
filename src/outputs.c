@@ -100,7 +100,8 @@ static const struct zwlr_output_configuration_v1_listener config_listener = {
   .cancelled = config_handle_cancelled,
 };
 
-void wd_apply_state(struct wd_state *state, struct wl_list *new_outputs) {
+void wd_apply_state(struct wd_state *state, struct wl_list *new_outputs,
+    struct wl_display *display) {
   struct zwlr_output_configuration_v1 *config =
     zwlr_output_manager_v1_create_configuration(state->output_manager, state->serial);
 
@@ -154,6 +155,8 @@ void wd_apply_state(struct wd_state *state, struct wl_list *new_outputs) {
   }
 
   zwlr_output_configuration_v1_apply(config);
+
+  wl_display_roundtrip(display);
 }
 
 static void wd_frame_destroy(struct wd_frame *frame) {

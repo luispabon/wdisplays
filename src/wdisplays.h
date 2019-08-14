@@ -281,7 +281,7 @@ void wd_add_output_management_listener(struct wd_state *state, struct wl_display
 /*
  * Sends updated display configuration back to the compositor.
  */
-void wd_apply_state(struct wd_state *state, struct wl_list *new_outputs);
+void wd_apply_state(struct wd_state *state, struct wl_list *new_outputs, struct wl_display *display);
 
 /*
  * Queues capture of the next frame of all screens.

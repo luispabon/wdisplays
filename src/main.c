@@ -150,7 +150,10 @@ static gboolean send_apply(gpointer data) {
     wl_list_insert(outputs, &output->link);
     fill_output_from_form(output, GTK_WIDGET(form_iter->data));
   }
-  wd_apply_state(state, outputs);
+  GdkWindow *window = gtk_widget_get_window(state->stack);
+  GdkDisplay *display = gdk_window_get_display(window);
+  struct wl_display *wl_display = gdk_wayland_display_get_wl_display(display);
+  wd_apply_state(state, outputs, wl_display);
   state->apply_pending = false;
   return FALSE;
 }
