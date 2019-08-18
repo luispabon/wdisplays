@@ -9,8 +9,14 @@ spinner.visible {
 }
 
 .output-overlay {
+  font-size: 96px;
   background-color: @theme_selected_bg_color;
   color: @theme_selected_fg_color;
   border-radius: 8px;
   opacity: 0.9;
+  padding: 8px;
+}
+
+.output-overlay .description {
+  font-size: 12px;
 }

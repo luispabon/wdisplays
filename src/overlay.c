@@ -33,7 +33,7 @@
 
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 
-#define TEXT_SIZE 128
+#define PADDING 8
 #define SCREEN_MARGIN_PERCENT 0.02
 
 static void layer_surface_configure(void *data,
@@ -57,21 +57,26 @@ static inline int min(int a, int b) {
   return a < b ? a : b;
 }
 
-static char *make_overlay_string(struct wd_head *head) {
-  return g_strdup_printf("%d", head->id + 1);
-}
-
 static PangoLayout *create_text_layout(struct wd_head *head,
-    PangoContext *pango) {
-  g_autofree gchar *str = make_overlay_string(head);
+    PangoContext *pango, GtkStyleContext *style) {
+  GtkStyleContext *desc_style = gtk_style_context_new();
+  gtk_style_context_set_screen(desc_style,
+      gtk_style_context_get_screen(style));
+  GtkWidgetPath *desc_path = gtk_widget_path_copy(
+      gtk_style_context_get_path(style));
+  gtk_widget_path_append_type(desc_path, G_TYPE_NONE);
+  gtk_style_context_set_path(desc_style, desc_path);
+  gtk_style_context_add_class(desc_style, "description");
+
+  double desc_font_size = 16.;
+  gtk_style_context_get(desc_style, GTK_STATE_FLAG_NORMAL,
+      "font-size", &desc_font_size, NULL);
+
+  g_autofree gchar *str = g_strdup_printf("%s\n<span size=\"%d\">%s</span>",
+      head->name, (int) (desc_font_size * PANGO_SCALE), head->description);
   PangoLayout *layout = pango_layout_new(pango);
 
-  PangoAttrList *attrs = pango_attr_list_new();
-  pango_attr_list_insert(attrs, pango_attr_size_new(TEXT_SIZE * PANGO_SCALE));
-  pango_layout_set_attributes(layout, attrs);
-  pango_attr_list_unref(attrs);
-  pango_layout_set_text(layout, str, -1);
-  pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_NONE);
+  pango_layout_set_markup(layout, str, -1);
   return layout;
 }
 
@@ -88,14 +93,24 @@ static void resize(struct wd_output *output) {
 
   GdkWindow *window = gtk_widget_get_window(output->overlay_window);
   PangoContext *pango = gtk_widget_get_pango_context(output->overlay_window);
-  PangoLayout *layout = create_text_layout(head, pango);
+  GtkStyleContext *style_ctx = gtk_widget_get_style_context(
+      output->overlay_window);
+  PangoLayout *layout = create_text_layout(head, pango, style_ctx);
 
   int width;
   int height;
   pango_layout_get_pixel_size(layout, &width, &height);
   g_object_unref(layout);
-  width = min(width, screen_width - margin * 2);
-  height = min(height, screen_height - margin * 2);
+
+  // broken upstream in GTK
+  /*
+  GtkBorder padding;
+  gtk_style_context_get(style_ctx, GTK_STATE_FLAG_NORMAL,
+      GTK_STYLE_PROPERTY_PADDING, padding, NULL);
+  */
+
+  width = min(width, screen_width - margin * 2) + PADDING * 2;
+  height = min(height, screen_height - margin * 2) + PADDING * 2;
 
   zwlr_layer_surface_v1_set_margin(output->overlay_layer_surface,
       margin, margin, margin, margin);
@@ -163,9 +178,10 @@ gboolean window_draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
   gtk_render_background(style_ctx, cr, 0, 0, width, height);
 
   PangoContext *pango = gtk_widget_get_pango_context(widget);
-  PangoLayout *layout = create_text_layout(head, pango);
+  PangoLayout *layout = create_text_layout(head, pango, style_ctx);
 
   gdk_cairo_set_source_rgba(cr, &fg);
+  cairo_move_to(cr, PADDING, PADDING);
   pango_cairo_show_layout(cr, layout);
   g_object_unref(layout);
   return TRUE;
