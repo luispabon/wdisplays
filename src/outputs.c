@@ -432,7 +432,6 @@ static void head_handle_enabled(void *data,
   head->enabled = !!enabled;
   if (!enabled) {
     head->output = NULL;
-    head->mode = NULL;
   }
   wd_ui_reset_head(head, WD_FIELD_ENABLED);
 }
@@ -518,7 +517,7 @@ static void output_manager_handle_head(void *data,
   head->scale = 1.0;
   head->id = wl_list_length(&state->heads);
   wl_list_init(&head->modes);
-  wl_list_insert(state->heads.prev, &head->link);
+  wl_list_insert(&state->heads, &head->link);
 
   zwlr_output_head_v1_add_listener(wlr_head, &head_listener, head);
 }
@@ -529,6 +528,16 @@ static void output_manager_handle_done(void *data,
   state->serial = serial;
 
   assert(wl_list_length(&state->heads) <= HEADS_MAX);
+
+  struct wd_head *head = data;
+  wl_list_for_each(head, &state->heads, link) {
+    if (!head->enabled && head->mode == NULL && !wl_list_empty(&head->modes)) {
+      struct wd_mode *mode = wl_container_of(head->modes.prev, mode, link);
+      head->custom_mode.width = mode->width;
+      head->custom_mode.height = mode->height;
+      head->custom_mode.refresh = mode->refresh;
+    }
+  }
   wd_ui_reset_heads(state);
 }
 
@@ -597,25 +606,6 @@ static void output_logical_position(void *data, struct zxdg_output_v1 *zxdg_outp
   }
 }
 
-static void output_logical_size(void *data, struct zxdg_output_v1 *zxdg_output_v1,
-    int32_t width, int32_t height) {
-  struct wd_output *output = data;
-  struct wd_head *head = wd_find_head(output->state, output);
-  if (head != NULL) {
-    struct wd_mode *mode;
-    head->custom_mode.width = width;
-    head->custom_mode.height = height;
-    head->mode = NULL;
-    wl_list_for_each(mode, &head->modes, link) {
-      if (mode->width == width && mode->height == height) {
-        head->mode = mode;
-        return;
-      }
-    }
-    wd_ui_reset_head(head, WD_FIELD_MODE);
-  }
-}
-
 static void output_name(void *data, struct zxdg_output_v1 *zxdg_output_v1,
     const char *name) {
   struct wd_output *output = data;
@@ -631,7 +621,7 @@ static void output_name(void *data, struct zxdg_output_v1 *zxdg_output_v1,
 
 static const struct zxdg_output_v1_listener output_listener = {
   .logical_position = output_logical_position,
-  .logical_size = output_logical_size,
+  .logical_size = noop,
   .done = noop,
   .name = output_name,
   .description = noop

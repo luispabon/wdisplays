@@ -637,7 +637,10 @@ void wd_ui_reset_heads(struct wd_state *state) {
 
     } else {
       form = form_iter->data;
-      g_object_set_data(G_OBJECT(form), "head", head);
+      if (head != g_object_get_data(G_OBJECT(form), "head")) {
+        g_object_set_data(G_OBJECT(form), "head", head);
+        update_head_form(form, WD_FIELDS_ALL);
+      }
       form_iter = form_iter->next;
     }
     i++;
