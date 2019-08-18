@@ -33,7 +33,6 @@
 
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 
-#define PADDING 8
 #define SCREEN_MARGIN_PERCENT 0.02
 
 static void layer_surface_configure(void *data,
@@ -102,15 +101,14 @@ static void resize(struct wd_output *output) {
   pango_layout_get_pixel_size(layout, &width, &height);
   g_object_unref(layout);
 
-  // broken upstream in GTK
-  /*
-  GtkBorder padding;
-  gtk_style_context_get(style_ctx, GTK_STATE_FLAG_NORMAL,
-      GTK_STYLE_PROPERTY_PADDING, padding, NULL);
-  */
 
-  width = min(width, screen_width - margin * 2) + PADDING * 2;
-  height = min(height, screen_height - margin * 2) + PADDING * 2;
+  GtkBorder padding;
+  gtk_style_context_get_padding(style_ctx, GTK_STATE_FLAG_NORMAL, &padding);
+
+  width = min(width, screen_width - margin * 2)
+    + padding.left + padding.right;
+  height = min(height, screen_height - margin * 2)
+    + padding.top + padding.bottom;
 
   zwlr_layer_surface_v1_set_margin(output->overlay_layer_surface,
       margin, margin, margin, margin);
@@ -177,11 +175,13 @@ gboolean window_draw(GtkWidget *widget, cairo_t *cr, gpointer data) {
   int height = gtk_widget_get_allocated_height(widget);
   gtk_render_background(style_ctx, cr, 0, 0, width, height);
 
+  GtkBorder padding;
+  gtk_style_context_get_padding(style_ctx, GTK_STATE_FLAG_NORMAL, &padding);
   PangoContext *pango = gtk_widget_get_pango_context(widget);
   PangoLayout *layout = create_text_layout(head, pango, style_ctx);
 
   gdk_cairo_set_source_rgba(cr, &fg);
-  cairo_move_to(cr, PADDING, PADDING);
+  cairo_move_to(cr, padding.left, padding.top);
   pango_cairo_show_layout(cr, layout);
   g_object_unref(layout);
   return TRUE;
