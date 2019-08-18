@@ -879,20 +879,17 @@ static gboolean canvas_click(GtkWidget *widget, GdkEvent *event,
   struct wd_state *state = data;
   if (event->button.type == GDK_BUTTON_PRESS) {
     if (event->button.button == 1) {
-      struct wd_head *head;
+      struct wd_render_head_data *render;
       state->clicked = NULL;
-      wl_list_for_each(head, &state->heads, link) {
-        struct wd_render_head_data *render = head->render;
-        if (render != NULL) {
-          double mouse_x = event->button.x;
-          double mouse_y = event->button.y;
-          if (mouse_x >= render->x1 && mouse_x < render->x2 &&
-              mouse_y >= render->y1 && mouse_y < render->y2) {
-            state->clicked = render;
-            state->click_offset.x = event->button.x - render->x1;
-            state->click_offset.y = event->button.y - render->y1;
-            break;
-          }
+      wl_list_for_each(render, &state->render.heads, link) {
+        double mouse_x = event->button.x;
+        double mouse_y = event->button.y;
+        if (mouse_x >= render->x1 && mouse_x < render->x2 &&
+            mouse_y >= render->y1 && mouse_y < render->y2) {
+          state->clicked = render;
+          state->click_offset.x = event->button.x - render->x1;
+          state->click_offset.y = event->button.y - render->y1;
+          break;
         }
       }
       if (state->clicked != NULL) {
