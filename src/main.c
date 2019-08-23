@@ -347,6 +347,21 @@ static inline void color_to_float_array(GtkStyleContext *ctx,
   out[3] = color.alpha;
 }
 
+static unsigned form_get_rotation(GtkWidget *form) {
+  GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form), "builder"));
+  unsigned rot;
+  for (rot = 0; rot < NUM_ROTATIONS; rot++) {
+    GtkWidget *rotate = GTK_WIDGET(gtk_builder_get_object(builder,
+          ROTATE_IDS[rot]));
+    gboolean selected;
+    g_object_get(rotate, "active", &selected, NULL);
+    if (selected) {
+      return rot;
+    }
+  }
+  return -1;
+}
+
 static void queue_canvas_draw(struct wd_state *state) {
   GtkStyleContext *style_ctx = gtk_widget_get_style_context(state->canvas);
   color_to_float_array(style_ctx,
@@ -379,6 +394,13 @@ static void queue_canvas_draw(struct wd_state *state) {
         wl_list_insert(&state->render.heads, &head->render->link);
       }
       struct wd_render_head_data *render = head->render;
+      render->queued.rotation = form_get_rotation(GTK_WIDGET(form_iter->data));
+      if (render->queued.rotation & 1) {
+        int tmp = w;
+        w = h;
+        h = tmp;
+      }
+      render->queued.x_invert = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "flipped")));
       render->x1 = floor(x * state->zoom - state->render.scroll_x - state->render.x_origin);
       render->y1 = floor(y * state->zoom - state->render.scroll_y - state->render.y_origin);
       render->x2 = floor(render->x1 + w * state->zoom / scale);
@@ -839,6 +861,10 @@ static void canvas_render(GtkGLArea *area, GdkGLContext *context, gpointer data)
           render->y_invert = frame->y_invert;
           render->swap_rgb = frame->swap_rgb;
         }
+        if (render->preview) {
+          render->active.rotation = render->queued.rotation;
+          render->active.x_invert = render->queued.x_invert;
+        }
       } else if (render->preview
           || render->pixels == NULL || size_changed(render)) {
         render->tex_width = render->x2 - render->x1;
@@ -852,6 +878,8 @@ static void canvas_render(GtkGLArea *area, GdkGLContext *context, gpointer data)
         render->pixels = cairo_image_surface_get_data(head->surface);
         render->tex_stride = cairo_image_surface_get_stride(head->surface);
         render->updated_at = tick;
+        render->active.rotation = 0;
+        render->active.x_invert = false;
         render->y_invert = false;
         render->swap_rgb = false;
       }

@@ -253,20 +253,39 @@ void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
   int i = 0;
   wl_list_for_each_reverse(head, &info->heads, link) {
     float *tri_ptr = res->tris + i * BT_UV_QUAD_SIZE;
-    float x1 = head->x1;
-    float y1 = head->y1;
-    float x2 = head->x2;
-    float y2 = head->y2;
+    float x1 = head->active.x_invert ? head->x2 : head->x1;
+    float y1 = head->y_invert ? head->y2 : head->y1;
+    float x2 = head->active.x_invert ? head->x1 : head->x2;
+    float y2 = head->y_invert ? head->y1 : head->y2;
 
-    float t1 = head->y_invert ? 1.f : 0.f;
-    float t2 = head->y_invert ? 0.f : 1.f;
+    float sa = 0.f;
+    float sb = 1.f;
+    float sc = sb;
+    float sd = sa;
+    float ta = 0.f;
+    float tb = ta;
+    float tc = 1.f;
+    float td = tc;
+    for (int i = 0; i < head->active.rotation; i++) {
+      float tmp = sd;
+      sd = sc;
+      sc = sb;
+      sb = sa;
+      sa = tmp;
 
-    PUSH_POINT_UV(tri_ptr, x1, y1, 0.f, t1)
-    PUSH_POINT_UV(tri_ptr, x2, y1, 1.f, t1)
-    PUSH_POINT_UV(tri_ptr, x1, y2, 0.f, t2)
-    PUSH_POINT_UV(tri_ptr, x1, y2, 0.f, t2)
-    PUSH_POINT_UV(tri_ptr, x2, y1, 1.f, t1)
-    PUSH_POINT_UV(tri_ptr, x2, y2, 1.f, t2)
+      tmp = td;
+      td = tc;
+      tc = tb;
+      tb = ta;
+      ta = tmp;
+    }
+
+    PUSH_POINT_UV(tri_ptr, x1, y1, sa, ta)
+    PUSH_POINT_UV(tri_ptr, x2, y1, sb, tb)
+    PUSH_POINT_UV(tri_ptr, x1, y2, sd, td)
+    PUSH_POINT_UV(tri_ptr, x1, y2, sd, td)
+    PUSH_POINT_UV(tri_ptr, x2, y1, sb, tb)
+    PUSH_POINT_UV(tri_ptr, x2, y2, sc, tc)
 
     tris += 6;
     i++;

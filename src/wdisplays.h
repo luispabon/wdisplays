@@ -148,25 +148,33 @@ struct wd_head {
 
 struct wd_gl_data;
 
+struct wd_render_head_flags {
+  uint8_t rotation;
+  bool x_invert;
+};
+
 struct wd_render_head_data {
   struct wl_list link;
+  uint64_t updated_at;
+  uint64_t transition_begin;
 
   float x1;
   float y1;
   float x2;
   float y2;
 
+  struct wd_render_head_flags queued;
+  struct wd_render_head_flags active;
+
   uint8_t *pixels;
   unsigned tex_stride;
   unsigned tex_width;
   unsigned tex_height;
+
   bool preview;
   bool y_invert;
   bool swap_rgb;
-  uint64_t updated_at;
-
   bool hovered;
-  uint64_t transition_begin;
 };
 
 struct wd_render_data {
