@@ -368,6 +368,8 @@ static unsigned form_get_rotation(GtkWidget *form) {
   return -1;
 }
 
+#define SWAP(_type, _a, _b) { _type _tmp = (_a); (_a) = (_b); (_b) = _tmp; }
+
 static void queue_canvas_draw(struct wd_state *state) {
   GtkStyleContext *style_ctx = gtk_widget_get_style_context(state->canvas);
   color_to_float_array(style_ctx,
@@ -402,9 +404,7 @@ static void queue_canvas_draw(struct wd_state *state) {
       struct wd_render_head_data *render = head->render;
       render->queued.rotation = form_get_rotation(GTK_WIDGET(form_iter->data));
       if (render->queued.rotation & 1) {
-        int tmp = w;
-        w = h;
-        h = tmp;
+        SWAP(int, w, h);
       }
       render->queued.x_invert = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "flipped")));
       render->x1 = floor(x * state->zoom - state->render.scroll_x - state->render.x_origin);
@@ -1002,6 +1002,15 @@ static gboolean canvas_motion(GtkWidget *widget, GdkEvent *event,
         .x = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "width"))),
         .y = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "height"))),
       };
+      double scale = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "scale")));
+      if (scale > 0.) {
+        size.x /= scale;
+        size.y /= scale;
+      }
+      unsigned rot = form_get_rotation(form);
+      if (rot & 1) {
+        SWAP(int, size.x, size.y);
+      }
       struct wd_point tl = {
         .x = (event->motion.x - state->click_offset.x
             + state->render.x_origin + state->render.scroll_x) / state->zoom,
@@ -1021,8 +1030,19 @@ static gboolean canvas_motion(GtkWidget *widget, GdkEvent *event,
           GtkBuilder *other_builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form_iter->data), "builder"));
           double x1 = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(other_builder, "pos_x")));
           double y1 = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(other_builder, "pos_y")));
-          double x2 = x1 + gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(other_builder, "width")));
-          double y2 = y1 + gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(other_builder, "height")));
+          double w = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(other_builder, "width")));
+          double h = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(other_builder, "height")));
+          scale = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(other_builder, "scale")));
+          if (scale > 0.) {
+            w /= scale;
+            h /= scale;
+          }
+          rot = form_get_rotation(GTK_WIDGET(form_iter->data));
+          if (rot & 1) {
+            SWAP(int, w, h);
+          }
+          double x2 = x1 + w;
+          double y2 = y1 + h;
           if (fabs(br.x) <= snap)
             new_pos.x = -size.x;
           if (fabs(br.y) <= snap)
