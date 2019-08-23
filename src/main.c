@@ -38,7 +38,7 @@ __attribute__((noreturn)) void wd_fatal_error(int status, const char *message) {
 #define DEFAULT_ZOOM 0.1
 #define MIN_ZOOM (1./1000.)
 #define MAX_ZOOM 1000.
-#define CANVAS_MARGIN 100
+#define CANVAS_MARGIN 40
 
 static const char *MODE_PREFIX = "mode";
 static const char *TRANSFORM_PREFIX = "transform";
@@ -201,6 +201,10 @@ static void update_scroll_size(struct wd_state *state) {
   gtk_adjustment_set_page_increment(scroll_y_adj, state->render.viewport_height);
   gtk_adjustment_set_step_increment(scroll_x_adj, state->render.viewport_width / 10);
   gtk_adjustment_set_step_increment(scroll_y_adj, state->render.viewport_height / 10);
+  double x = gtk_adjustment_get_value(scroll_x_adj);
+  double y = gtk_adjustment_get_value(scroll_y_adj);
+  gtk_adjustment_set_value(scroll_x_adj, MIN(x, scroll_x_upper));
+  gtk_adjustment_set_value(scroll_y_adj, MIN(y, scroll_y_upper));
 }
 
 /*
@@ -212,25 +216,27 @@ static void update_canvas_size(struct wd_state *state) {
   int ymin = 0;
   int ymax = 0;
 
-  struct wd_head *head;
-  wl_list_for_each(head, &state->heads, link) {
-    int w = head->custom_mode.width;
-    int h = head->custom_mode.height;
-    if (head->enabled && head->mode != NULL) {
-      w = head->mode->width;
-      h = head->mode->height;
+  g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
+  for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
+    GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form_iter->data), "builder"));
+    gboolean enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "enabled")));
+    if (enabled) {
+      int x1 = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_x")));
+      int y1 = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_y")));
+      int w = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "width")));
+      int h = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "height")));
+      int x2 = x1 + w;
+      int y2 = y1 + w;
+      double scale = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "scale")));
+      if (scale > 0.) {
+        w /= scale;
+        h /= scale;
+      }
+      xmin = MIN(xmin, x1);
+      xmax = MAX(xmax, x2);
+      ymin = MIN(ymin, y1);
+      ymax = MAX(ymax, y2);
     }
-    if (head->scale > 0.) {
-      w /= head->scale;
-      h /= head->scale;
-    }
-
-    int x2 = head->x + w;
-    int y2 = head->y + h;
-    xmin = MIN(xmin, head->x);
-    xmax = MAX(xmax, x2);
-    ymin = MIN(ymin, head->y);
-    ymax = MAX(ymax, y2);
   }
   // update canvas sizings
   state->render.x_origin = floor(xmin * state->zoom) - CANVAS_MARGIN;

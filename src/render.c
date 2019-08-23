@@ -29,8 +29,6 @@
 #include <epoxy/gl.h>
 #include <wayland-util.h>
 
-#define CANVAS_MARGIN 100
-
 #define BT_UV_VERT_SIZE (2 + 2)
 #define BT_UV_QUAD_SIZE (6 * BT_UV_VERT_SIZE)
 #define BT_UV_MAX (BT_COLOR_QUAD_SIZE * HEADS_MAX)
