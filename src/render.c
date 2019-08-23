@@ -239,7 +239,8 @@ void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
         res->textures + res->texture_count);
     for (int i = res->texture_count; i < head_count; i++) {
       glBindTexture(GL_TEXTURE_2D, res->textures[i]);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+          GL_LINEAR_MIPMAP_LINEAR);
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -304,6 +305,7 @@ void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
             head->tex_width, head->tex_height,
             0, GL_RGBA, GL_UNSIGNED_BYTE, head->pixels);
         glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, 0);
+        glGenerateMipmap(GL_TEXTURE_2D);
       }
       glUniformMatrix4fv(res->texture_color_transform_uniform, 1, GL_FALSE,
         head->swap_rgb ? TRANSFORM_RGB : TRANSFORM_BGR);
