@@ -37,6 +37,18 @@
 #define BT_COLOR_QUAD_SIZE (6 * BT_COLOR_VERT_SIZE)
 #define BT_COLOR_MAX (BT_COLOR_QUAD_SIZE * HEADS_MAX)
 
+#define BT_LINE_VERT_SIZE (2 + 4)
+#define BT_LINE_QUAD_SIZE (8 * BT_LINE_VERT_SIZE)
+#define BT_LINE_EXT_SIZE (24 * BT_LINE_VERT_SIZE)
+#define BT_LINE_MAX (BT_LINE_EXT_SIZE * (HEADS_MAX + 1))
+
+enum gl_buffers {
+  TEXTURE_BUFFER,
+  COLOR_BUFFER,
+  LINE_BUFFER,
+  NUM_BUFFERS
+};
+
 struct wd_gl_data {
   GLuint color_program;
   GLuint color_vertex_shader;
@@ -54,12 +66,12 @@ struct wd_gl_data {
   GLuint texture_texture_uniform;
   GLuint texture_color_transform_uniform;
 
-  GLuint buffers[2];
+  GLuint buffers[NUM_BUFFERS];
 
   unsigned texture_count;
   GLuint textures[HEADS_MAX];
 
-  float tris[BT_COLOR_MAX];
+  float verts[BT_LINE_MAX];
 };
 
 static const char *color_vertex_shader_src = "\
@@ -186,13 +198,17 @@ struct wd_gl_data *wd_gl_setup(void) {
   res->texture_color_transform_uniform = glGetUniformLocation(
       res->texture_program, "color_transform");
 
-  glGenBuffers(2, res->buffers);
-  glBindBuffer(GL_ARRAY_BUFFER, res->buffers[0]);
+  glGenBuffers(NUM_BUFFERS, res->buffers);
+  glBindBuffer(GL_ARRAY_BUFFER, res->buffers[TEXTURE_BUFFER]);
   glBufferData(GL_ARRAY_BUFFER, BT_UV_MAX * sizeof(float),
       NULL, GL_DYNAMIC_DRAW);
 
-  glBindBuffer(GL_ARRAY_BUFFER, res->buffers[1]);
+  glBindBuffer(GL_ARRAY_BUFFER, res->buffers[COLOR_BUFFER]);
   glBufferData(GL_ARRAY_BUFFER, BT_COLOR_MAX * sizeof(float),
+      NULL, GL_DYNAMIC_DRAW);
+
+  glBindBuffer(GL_ARRAY_BUFFER, res->buffers[LINE_BUFFER]);
+  glBufferData(GL_ARRAY_BUFFER, BT_LINE_MAX * sizeof(float),
       NULL, GL_DYNAMIC_DRAW);
 
   return res;
@@ -210,27 +226,50 @@ static const GLfloat TRANSFORM_BGR[16] = {
   1, 0, 0, 0,
   0, 0, 0, 1};
 
-#define PUSH_POINT(_start, _a, _b) \
+#define PUSH_POINT_COLOR(_start, _a, _b, _color, _alpha) \
     *((_start)++) = (_a);\
-    *((_start)++) = (_b);
+    *((_start)++) = (_b);\
+    *((_start)++) = ((_color)[0]);\
+    *((_start)++) = ((_color)[1]);\
+    *((_start)++) = ((_color)[2]);\
+    *((_start)++) = (_alpha);
 
-#define PUSH_COLOR(_start, _a, _b, _c, _d) \
+#define PUSH_POINT_UV(_start, _a, _b, _c, _d) \
     *((_start)++) = (_a);\
     *((_start)++) = (_b);\
     *((_start)++) = (_c);\
     *((_start)++) = (_d);
 
-#define PUSH_POINT_UV(_start, _a, _b, _c, _d) \
-    PUSH_COLOR(_start, _a, _b, _c, _d)
+static inline float lerp(float x, float y, float a) {
+  return x * (1.f - a) + y * a;
+}
+
+static inline void lerp_color(float out[3], float x[3], float y[3], float a) {
+  out[0] = lerp(x[0], y[0], a);
+  out[1] = lerp(x[1], y[1], a);
+  out[2] = lerp(x[2], y[2], a);
+  out[3] = lerp(x[3], y[3], a);
+}
+
+static inline float ease(float d) {
+  d *= 2.f;
+  if (d <= 1.f) {
+    d = d * d;
+  } else {
+    d -= 1.f;
+    d = d * (2.f - d) + 1.f;
+  }
+  d /= 2.f;
+  return d;
+}
 
 void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
     uint64_t tick) {
-  unsigned int tris = 0;
+  unsigned int tri_verts = 0;
 
   unsigned int head_count = wl_list_length(&info->heads);
-  if (head_count >= HEADS_MAX) {
+  if (head_count >= HEADS_MAX)
     head_count = HEADS_MAX;
-  }
 
   if (head_count > res->texture_count) {
     glGenTextures(head_count - res->texture_count,
@@ -250,7 +289,7 @@ void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
   struct wd_render_head_data *head;
   int i = 0;
   wl_list_for_each_reverse(head, &info->heads, link) {
-    float *tri_ptr = res->tris + i * BT_UV_QUAD_SIZE;
+    float *tri_ptr = res->verts + i * BT_UV_QUAD_SIZE;
     float x1 = head->active.x_invert ? head->x2 : head->x1;
     float y1 = head->y_invert ? head->y2 : head->y1;
     float x2 = head->active.x_invert ? head->x1 : head->x2;
@@ -285,11 +324,10 @@ void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
     PUSH_POINT_UV(tri_ptr, x2, y1, sb, tb)
     PUSH_POINT_UV(tri_ptr, x2, y2, sc, tc)
 
-    tris += 6;
+    tri_verts += 6;
     i++;
-    if (i >= HEADS_MAX) {
+    if (i >= HEADS_MAX)
       break;
-    }
   }
 
   glClearColor(info->bg_color[0], info->bg_color[1], info->bg_color[2], 1.f);
@@ -297,11 +335,11 @@ void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
 
   float screen_size[2] = { info->viewport_width, info->viewport_height };
 
-  if (tris > 0) {
+  if (tri_verts > 0) {
     glUseProgram(res->texture_program);
-    glBindBuffer(GL_ARRAY_BUFFER, res->buffers[0]);
+    glBindBuffer(GL_ARRAY_BUFFER, res->buffers[TEXTURE_BUFFER]);
     glBufferSubData(GL_ARRAY_BUFFER, 0,
-        tris * BT_UV_VERT_SIZE * sizeof(float), res->tris);
+        tri_verts * BT_UV_VERT_SIZE * sizeof(float), res->verts);
     glEnableVertexAttribArray(res->texture_position_attribute);
     glEnableVertexAttribArray(res->texture_uv_attribute);
     glVertexAttribPointer(res->texture_position_attribute,
@@ -328,19 +366,23 @@ void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
         head->swap_rgb ? TRANSFORM_RGB : TRANSFORM_BGR);
       glDrawArrays(GL_TRIANGLES, i * 6, 6);
       i++;
-      if (i >= HEADS_MAX) {
+      if (i >= HEADS_MAX)
         break;
-      }
     }
   }
 
-  tris = 0;
+  tri_verts = 0;
 
   int j = 0;
   i = 0;
+  bool any_clicked = false;
+  uint64_t click_begin = 0;
   wl_list_for_each_reverse(head, &info->heads, link) {
-    if (head->hovered || tick < head->transition_begin + HOVER_USECS) {
-      float *tri_ptr = res->tris + j++ * BT_COLOR_QUAD_SIZE;
+    any_clicked = head->clicked || any_clicked;
+    if (head->click_begin > click_begin)
+      click_begin = head->click_begin;
+    if (head->hovered || tick < head->hover_begin + HOVER_USECS) {
+      float *tri_ptr = res->verts + j++ * BT_COLOR_QUAD_SIZE;
       float x1 = head->x1;
       float y1 = head->y1;
       float x2 = head->x2;
@@ -348,48 +390,32 @@ void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
 
       float *color = info->selection_color;
       float d = fminf(
-          (tick - head->transition_begin) / (double) HOVER_USECS, 1.f);
-      if (!head->hovered) {
+          (tick - head->hover_begin) / (double) HOVER_USECS, 1.f);
+      if (!head->hovered)
         d = 1.f - d;
-      }
-      d *= 2.f;
-      if (d <= 1.f) {
-        d = d * d;
-      } else {
-        d -= 1.f;
-        d = d * (2.f - d) + 1.f;
-      }
-      d /= 2.f;
-      float alpha = color[3] * d * .5f;
+      float alpha = color[3] * ease(d) * .5f;
 
-      PUSH_POINT(tri_ptr, x1, y1)
-      PUSH_COLOR(tri_ptr, color[0], color[1], color[2], alpha)
-      PUSH_POINT(tri_ptr, x2, y1)
-      PUSH_COLOR(tri_ptr, color[0], color[1], color[2], alpha)
-      PUSH_POINT(tri_ptr, x1, y2)
-      PUSH_COLOR(tri_ptr, color[0], color[1], color[2], alpha)
-      PUSH_POINT(tri_ptr, x1, y2)
-      PUSH_COLOR(tri_ptr, color[0], color[1], color[2], alpha)
-      PUSH_POINT(tri_ptr, x2, y1)
-      PUSH_COLOR(tri_ptr, color[0], color[1], color[2], alpha)
-      PUSH_POINT(tri_ptr, x2, y2)
-      PUSH_COLOR(tri_ptr, color[0], color[1], color[2], alpha)
+      PUSH_POINT_COLOR(tri_ptr, x1, y1, color, alpha)
+      PUSH_POINT_COLOR(tri_ptr, x2, y1, color, alpha)
+      PUSH_POINT_COLOR(tri_ptr, x1, y2, color, alpha)
+      PUSH_POINT_COLOR(tri_ptr, x1, y2, color, alpha)
+      PUSH_POINT_COLOR(tri_ptr, x2, y1, color, alpha)
+      PUSH_POINT_COLOR(tri_ptr, x2, y2, color, alpha)
 
-      tris += 6;
+      tri_verts += 6;
     }
     i++;
-    if (i >= HEADS_MAX) {
+    if (i >= HEADS_MAX)
       break;
-    }
   }
 
-  if (tris > 0) {
+  if (tri_verts > 0) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glUseProgram(res->color_program);
-    glBindBuffer(GL_ARRAY_BUFFER, res->buffers[1]);
+    glBindBuffer(GL_ARRAY_BUFFER, res->buffers[COLOR_BUFFER]);
     glBufferSubData(GL_ARRAY_BUFFER, 0,
-        tris * BT_COLOR_VERT_SIZE * sizeof(float), res->tris);
+        tri_verts * BT_COLOR_VERT_SIZE * sizeof(float), res->verts);
     glEnableVertexAttribArray(res->color_position_attribute);
     glEnableVertexAttribArray(res->color_color_attribute);
     glVertexAttribPointer(res->color_position_attribute, 2, GL_FLOAT, GL_FALSE,
@@ -397,13 +423,113 @@ void wd_gl_render(struct wd_gl_data *res, struct wd_render_data *info,
     glVertexAttribPointer(res->color_color_attribute, 4, GL_FLOAT, GL_FALSE,
         BT_COLOR_VERT_SIZE * sizeof(float), (void *) (2 * sizeof(float)));
     glUniform2fv(res->color_screen_size_uniform, 1, screen_size);
-    glDrawArrays(GL_TRIANGLES, 0, tris);
+    glDrawArrays(GL_TRIANGLES, 0, tri_verts);
+    glDisable(GL_BLEND);
+  }
+
+  unsigned int line_verts = 0;
+  i = 0;
+  float *line_ptr = res->verts;
+  if (any_clicked || (click_begin && tick < click_begin + HOVER_USECS)) {
+    const float ox = -info->scroll_x - info->x_origin;
+    const float oy = -info->scroll_y - info->y_origin;
+    const float sx = screen_size[0];
+    const float sy = screen_size[1];
+
+    float color[4];
+    lerp_color(color, info->selection_color, info->fg_color, .5f);
+    float d = fminf(
+        (tick - click_begin) / (double) HOVER_USECS, 1.f);
+    if (!any_clicked)
+      d = 1.f - d;
+    float alpha = color[3] * ease(d) * .5f;
+
+    PUSH_POINT_COLOR(line_ptr, ox, oy, color, alpha)
+    PUSH_POINT_COLOR(line_ptr, sx, oy, color, alpha)
+    PUSH_POINT_COLOR(line_ptr, ox, oy, color, alpha)
+    PUSH_POINT_COLOR(line_ptr, ox, sy, color, alpha)
+
+    line_verts += 4;
+  }
+  wl_list_for_each(head, &info->heads, link) {
+    float x1 = head->x1;
+    float y1 = head->y1;
+    float x2 = head->x2;
+    float y2 = head->y2;
+
+    float *color = info->fg_color;
+    float alpha = color[3] * (head->clicked ? .5f : .25f);
+
+    PUSH_POINT_COLOR(line_ptr, x1, y1, color, alpha)
+    PUSH_POINT_COLOR(line_ptr, x2, y1, color, alpha)
+    PUSH_POINT_COLOR(line_ptr, x2, y1, color, alpha)
+    PUSH_POINT_COLOR(line_ptr, x2, y2, color, alpha)
+    PUSH_POINT_COLOR(line_ptr, x2, y2, color, alpha)
+    PUSH_POINT_COLOR(line_ptr, x1, y2, color, alpha)
+    PUSH_POINT_COLOR(line_ptr, x1, y2, color, alpha)
+    PUSH_POINT_COLOR(line_ptr, x1, y1, color, alpha)
+
+    line_verts += 8;
+
+    if (any_clicked || (click_begin && tick < click_begin + HOVER_USECS)) {
+      float d = fminf(
+          (tick - click_begin) / (double) HOVER_USECS, 1.f);
+      if (!any_clicked)
+        d = 1.f - d;
+      alpha = color[3] * ease(d) * (head->clicked ? .15f : .075f);
+
+      const float sx = screen_size[0];
+      const float sy = screen_size[1];
+
+      PUSH_POINT_COLOR(line_ptr, 0,  y1, color, alpha)
+      PUSH_POINT_COLOR(line_ptr, x1, y1, color, alpha)
+      PUSH_POINT_COLOR(line_ptr, x1, 0,  color, alpha)
+      PUSH_POINT_COLOR(line_ptr, x1, y1, color, alpha)
+
+      PUSH_POINT_COLOR(line_ptr, sx, y1, color, alpha)
+      PUSH_POINT_COLOR(line_ptr, x2, y1, color, alpha)
+      PUSH_POINT_COLOR(line_ptr, x2, 0,  color, alpha)
+      PUSH_POINT_COLOR(line_ptr, x2, y1, color, alpha)
+
+      PUSH_POINT_COLOR(line_ptr, sx, y2, color, alpha)
+      PUSH_POINT_COLOR(line_ptr, x2, y2, color, alpha)
+      PUSH_POINT_COLOR(line_ptr, x2, sy, color, alpha)
+      PUSH_POINT_COLOR(line_ptr, x2, y2, color, alpha)
+
+      PUSH_POINT_COLOR(line_ptr, 0,  y2, color, alpha)
+      PUSH_POINT_COLOR(line_ptr, x1, y2, color, alpha)
+      PUSH_POINT_COLOR(line_ptr, x1, sy, color, alpha)
+      PUSH_POINT_COLOR(line_ptr, x1, y2, color, alpha)
+
+      line_verts += 16;
+    }
+
+    i++;
+    if (i >= HEADS_MAX)
+      break;
+  }
+
+  if (line_verts > 0) {
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glUseProgram(res->color_program);
+    glBindBuffer(GL_ARRAY_BUFFER, res->buffers[LINE_BUFFER]);
+    glBufferSubData(GL_ARRAY_BUFFER, 0,
+        line_verts * BT_LINE_VERT_SIZE * sizeof(float), res->verts);
+    glEnableVertexAttribArray(res->color_position_attribute);
+    glEnableVertexAttribArray(res->color_color_attribute);
+    glVertexAttribPointer(res->color_position_attribute, 2, GL_FLOAT, GL_FALSE,
+        BT_LINE_VERT_SIZE * sizeof(float), (void *) (0 * sizeof(float)));
+    glVertexAttribPointer(res->color_color_attribute, 4, GL_FLOAT, GL_FALSE,
+        BT_LINE_VERT_SIZE * sizeof(float), (void *) (2 * sizeof(float)));
+    glUniform2fv(res->color_screen_size_uniform, 1, screen_size);
+    glDrawArrays(GL_LINES, 0, line_verts);
     glDisable(GL_BLEND);
   }
 }
 
 void wd_gl_cleanup(struct wd_gl_data *res) {
-  glDeleteBuffers(2, res->buffers);
+  glDeleteBuffers(NUM_BUFFERS, res->buffers);
   glDeleteShader(res->texture_fragment_shader);
   glDeleteShader(res->texture_vertex_shader);
   glDeleteProgram(res->texture_program);

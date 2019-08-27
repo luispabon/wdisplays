@@ -154,7 +154,7 @@ static gboolean send_apply(gpointer data) {
   GdkDisplay *display = gdk_window_get_display(window);
   struct wl_display *wl_display = gdk_wayland_display_get_wl_display(display);
   wd_apply_state(state, outputs, wl_display);
-  state->apply_pending = false;
+  state->apply_pending = FALSE;
   return FALSE;
 }
 
@@ -175,7 +175,7 @@ static void apply_state(struct wd_state *state) {
 
   /* queue this once per iteration in order to prevent duplicate updates */
   if (!state->apply_pending) {
-    state->apply_pending = true;
+    state->apply_pending = TRUE;
     g_idle_add(send_apply, state);
   }
 }
@@ -257,11 +257,12 @@ static void cache_scroll(struct wd_state *state) {
 static gboolean redraw_canvas(GtkWidget *widget, GdkFrameClock *frame_clock, gpointer data);
 
 static void update_tick_callback(struct wd_state *state) {
-  bool any_animate = false;
+  bool any_animate = FALSE;
   struct wd_render_head_data *render;
   wl_list_for_each(render, &state->render.heads, link) {
-    if (state->render.updated_at < render->transition_begin + HOVER_USECS) {
-      any_animate = true;
+    if (state->render.updated_at < render->hover_begin + HOVER_USECS
+        || state->render.updated_at < render->click_begin + HOVER_USECS) {
+      any_animate = TRUE;
       break;
     }
   }
@@ -279,12 +280,12 @@ static void update_tick_callback(struct wd_state *state) {
 }
 
 static void update_cursor(struct wd_state *state) {
-  bool any_hovered = false;
+  bool any_hovered = FALSE;
   struct wd_head *head;
   wl_list_for_each(head, &state->heads, link) {
     struct wd_render_head_data *render = head->render;
     if (render != NULL && render->hovered) {
-      any_hovered = true;
+      any_hovered = TRUE;
       break;
     }
   }
@@ -300,6 +301,15 @@ static void update_cursor(struct wd_state *state) {
   }
 }
 
+static inline void flip_anim(uint64_t *timer, uint64_t tick) {
+  uint64_t animate_end = *timer + HOVER_USECS;
+  if (tick < animate_end) {
+    *timer = tick - (animate_end - tick);
+  } else {
+    *timer = tick;
+  }
+}
+
 static void update_hovered(struct wd_state *state) {
   GdkDisplay *display = gdk_display_get_default();
   GdkWindow *window = gtk_widget_get_window(state->canvas);
@@ -309,17 +319,17 @@ static void update_hovered(struct wd_state *state) {
   GdkFrameClock *clock = gtk_widget_get_frame_clock(state->canvas);
   uint64_t tick = gdk_frame_clock_get_frame_time(clock);
   g_autoptr(GList) seats = gdk_display_list_seats(display);
-  bool any_hovered = false;
+  bool any_hovered = FALSE;
   struct wd_render_head_data *render;
   wl_list_for_each(render, &state->render.heads, link) {
     bool init_hovered = render->hovered;
-    render->hovered = false;
+    render->hovered = FALSE;
     if (any_hovered) {
       continue;
     }
     if (state->clicked == render) {
-      render->hovered = true;
-      any_hovered = true;
+      render->hovered = TRUE;
+      any_hovered = TRUE;
     } else if (state->clicked == NULL) {
       for (GList *iter = seats; iter != NULL; iter = iter->next) {
         double mouse_x;
@@ -329,14 +339,14 @@ static void update_hovered(struct wd_state *state) {
         gdk_window_get_device_position_double(window, pointer, &mouse_x, &mouse_y, NULL);
         if (mouse_x >= render->x1 && mouse_x < render->x2 &&
             mouse_y >= render->y1 && mouse_y < render->y2) {
-          render->hovered = true;
-          any_hovered = true;
+          render->hovered = TRUE;
+          any_hovered = TRUE;
           break;
         }
       }
     }
     if (init_hovered != render->hovered) {
-      render->transition_begin = tick;
+      flip_anim(&render->hover_begin, tick);
     }
   }
   update_cursor(state);
@@ -812,11 +822,6 @@ static cairo_surface_t *draw_head(PangoContext *pango,
   cairo_set_source_color(cr, info->border_color);
   cairo_fill(cr);
 
-  cairo_set_line_width(cr, 1.);
-  cairo_rectangle(cr, 0, 0, width, height);
-  cairo_set_source_color(cr, info->fg_color);
-  cairo_stroke(cr);
-
   PangoLayout *layout = pango_layout_new(pango);
   pango_layout_set_text(layout, name, -1);
   int text_width = pango_units_from_double(width - TEXT_MARGIN * 2);
@@ -862,7 +867,7 @@ static void canvas_render(GtkGLArea *area, GdkGLContext *context, gpointer data)
           render->tex_width = frame->width;
           render->tex_height = frame->height;
           render->pixels = frame->pixels;
-          render->preview = true;
+          render->preview = TRUE;
           render->updated_at = tick;
           render->y_invert = frame->y_invert;
           render->swap_rgb = frame->swap_rgb;
@@ -875,7 +880,7 @@ static void canvas_render(GtkGLArea *area, GdkGLContext *context, gpointer data)
           || render->pixels == NULL || size_changed(render)) {
         render->tex_width = render->x2 - render->x1;
         render->tex_height = render->y2 - render->y1;
-        render->preview = false;
+        render->preview = FALSE;
         if (head->surface != NULL) {
           cairo_surface_destroy(head->surface);
         }
@@ -885,9 +890,9 @@ static void canvas_render(GtkGLArea *area, GdkGLContext *context, gpointer data)
         render->tex_stride = cairo_image_surface_get_stride(head->surface);
         render->updated_at = tick;
         render->active.rotation = 0;
-        render->active.x_invert = false;
-        render->y_invert = false;
-        render->swap_rgb = false;
+        render->active.x_invert = FALSE;
+        render->y_invert = FALSE;
+        render->swap_rgb = FALSE;
       }
     }
   }
@@ -911,6 +916,23 @@ static void canvas_unrealize(GtkWidget *widget, gpointer data) {
   state->gl_data = NULL;
 }
 
+static void set_clicked_head(struct wd_state *state,
+    struct wd_render_head_data *clicked) {
+  GdkFrameClock *clock = gtk_widget_get_frame_clock(state->canvas);
+  uint64_t tick = gdk_frame_clock_get_frame_time(clock);
+  if (clicked != state->clicked) {
+    if (state->clicked != NULL) {
+      state->clicked->clicked = FALSE;
+      flip_anim(&state->clicked->click_begin, tick);
+    }
+    if (clicked != NULL) {
+      clicked->clicked = TRUE;
+      flip_anim(&clicked->click_begin, tick);
+    }
+  }
+  state->clicked = clicked;
+}
+
 static gboolean canvas_click(GtkWidget *widget, GdkEvent *event,
     gpointer data) {
   struct wd_state *state = data;
@@ -923,7 +945,7 @@ static gboolean canvas_click(GtkWidget *widget, GdkEvent *event,
         double mouse_y = event->button.y;
         if (mouse_x >= render->x1 && mouse_x < render->x2 &&
             mouse_y >= render->y1 && mouse_y < render->y2) {
-          state->clicked = render;
+          set_clicked_head(state, render);
           state->click_offset.x = event->button.x - render->x1;
           state->click_offset.y = event->button.y - render->y1;
           break;
@@ -936,7 +958,7 @@ static gboolean canvas_click(GtkWidget *widget, GdkEvent *event,
         struct wd_render_head_data *render;
         wl_list_for_each(render, &state->render.heads, link) {
           render->updated_at = 0;
-          render->preview = true;
+          render->preview = TRUE;
         }
         gtk_gl_area_queue_render(GTK_GL_AREA(state->canvas));
         g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
@@ -949,7 +971,7 @@ static gboolean canvas_click(GtkWidget *widget, GdkEvent *event,
         }
       }
     } else if (event->button.button == 2) {
-      state->panning = true;
+      state->panning = TRUE;
       state->pan_last.x = event->button.x;
       state->pan_last.y = event->button.y;
     }
@@ -961,10 +983,10 @@ static gboolean canvas_release(GtkWidget *widget, GdkEvent *event,
     gpointer data) {
   struct wd_state *state = data;
   if (event->button.button == 1) {
-    state->clicked = NULL;
+    set_clicked_head(state, NULL);
   }
   if (event->button.button == 2) {
-    state->panning = false;
+    state->panning = FALSE;
   }
   update_cursor(state);
   return TRUE;
@@ -1084,10 +1106,10 @@ static gboolean canvas_enter(GtkWidget *widget, GdkEvent *event,
     gpointer data) {
   struct wd_state *state = data;
   if (!(event->crossing.state & GDK_BUTTON1_MASK)) {
-    state->clicked = NULL;
+    set_clicked_head(state, NULL);
   }
   if (!(event->crossing.state & GDK_BUTTON2_MASK)) {
-    state->panning = false;
+    state->panning = FALSE;
   }
   update_cursor(state);
   return TRUE;
@@ -1098,7 +1120,7 @@ static gboolean canvas_leave(GtkWidget *widget, GdkEvent *event,
   struct wd_state *state = data;
   struct wd_render_head_data *render;
   wl_list_for_each(render, &state->render.heads, link) {
-    render->hovered = false;
+    render->hovered = FALSE;
   }
   update_tick_callback(state);
   return TRUE;
@@ -1321,12 +1343,12 @@ static void activate(GtkApplication* app, gpointer user_data) {
     wd_fatal_error(1, "Compositor doesn't support xdg-output-unstable-v1");
   }
   if (state->copy_manager == NULL) {
-    state->capture = false;
+    state->capture = FALSE;
     g_simple_action_set_state(capture_action, g_variant_new_boolean(state->capture));
     g_simple_action_set_enabled(capture_action, FALSE);
   }
   if (state->layer_shell == NULL) {
-    state->show_overlay = false;
+    state->show_overlay = FALSE;
     g_simple_action_set_state(overlay_action, g_variant_new_boolean(state->show_overlay));
     g_simple_action_set_enabled(overlay_action, FALSE);
   }

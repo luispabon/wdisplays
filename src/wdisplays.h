@@ -156,7 +156,8 @@ struct wd_render_head_flags {
 struct wd_render_head_data {
   struct wl_list link;
   uint64_t updated_at;
-  uint64_t transition_begin;
+  uint64_t hover_begin;
+  uint64_t click_begin;
 
   float x1;
   float y1;
@@ -175,6 +176,7 @@ struct wd_render_head_data {
   bool y_invert;
   bool swap_rgb;
   bool hovered;
+  bool clicked;
 };
 
 struct wd_render_data {
