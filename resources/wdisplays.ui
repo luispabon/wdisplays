@@ -56,7 +56,7 @@
             <property name="can_focus">True</property>
             <property name="receives_default">True</property>
             <property name="action_name">app.show-overlay</property>
-            <property name="text" translatable="yes">Show Numbers on Screens</property>
+            <property name="text" translatable="yes">Overlay Screen Names</property>
           </object>
           <packing>
             <property name="expand">False</property>
