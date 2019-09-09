@@ -56,10 +56,7 @@ It's intended to be the Wayland equivalent of an xrandr GUI, like [ARandR].
 
 ### Help, I get errors and/or crashes!
 
-Make sure your wlroots and sway are up-to-date. Particularly, you need a git
-revision of wlroots from [this commit](https://github.com/swaywm/wlroots/commit/724b5e1b8d742a8429f4431ae1a55d7d26cb92ae)
-(or later) or your compositor may crash when adding/removing displays.
-Alternatively, you can try to disable the "Show Screen Contents" option.
+Make sure your wlroots is at version 0.7.0 or later.
 
 ### I'm using Sway, why aren't my display settings saved when I log out?
 
