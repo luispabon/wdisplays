@@ -218,6 +218,9 @@ struct wd_state {
   bool show_overlay;
   double zoom;
 
+  unsigned int apply_idle;
+  unsigned int reset_idle;
+
   struct wd_render_head_data *clicked;
   /* top left, bottom right */
   struct wd_point click_offset;

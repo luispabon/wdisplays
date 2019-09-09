@@ -142,6 +142,7 @@ void fill_output_from_form(struct wd_head_config *output, GtkWidget *form) {
 
 static gboolean send_apply(gpointer data) {
   struct wd_state *state = data;
+  state->apply_idle = -1;
   struct wl_list *outputs = calloc(1, sizeof(*outputs));
   wl_list_init(outputs);
   g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
@@ -176,12 +177,15 @@ static void apply_state(struct wd_state *state) {
   /* queue this once per iteration in order to prevent duplicate updates */
   if (!state->apply_pending) {
     state->apply_pending = TRUE;
-    g_idle_add(send_apply, state);
+    state->apply_idle = g_idle_add_full(G_PRIORITY_DEFAULT,
+        send_apply, state, NULL);
   }
 }
 
 static gboolean apply_done_reset(gpointer data) {
-  wd_ui_reset_all(data);
+  struct wd_state *state = data;
+  state->reset_idle = -1;
+  wd_ui_reset_all(state);
   return FALSE;
 }
 
@@ -733,7 +737,8 @@ void wd_ui_apply_done(struct wd_state *state, struct wl_list *outputs) {
   if (!state->autoapply) {
     show_apply(state);
   }
-  g_idle_add(apply_done_reset, state);
+  state->reset_idle = g_idle_add_full(G_PRIORITY_DEFAULT,
+      apply_done_reset, state, NULL);
 }
 
 void wd_ui_show_error(struct wd_state *state, const char *message) {
@@ -745,6 +750,10 @@ void wd_ui_show_error(struct wd_state *state, const char *message) {
 // BEGIN GLOBAL CALLBACKS
 static void cleanup(GtkWidget *window, gpointer data) {
   struct wd_state *state = data;
+  if (state->reset_idle != -1)
+    g_source_remove(state->reset_idle);
+  if (state->apply_idle != -1)
+    g_source_remove(state->apply_idle);
   g_object_unref(state->grab_cursor);
   g_object_unref(state->grabbing_cursor);
   g_object_unref(state->move_cursor);
@@ -1249,6 +1258,8 @@ static void activate(GtkApplication* app, gpointer user_data) {
   struct wd_state *state = wd_state_create();
   state->zoom = DEFAULT_ZOOM;
   state->canvas_tick = -1;
+  state->apply_idle = -1;
+  state->reset_idle = -1;
 
   GtkCssProvider *css_provider = gtk_css_provider_new();
   gtk_css_provider_load_from_resource(css_provider, "/style.css");
