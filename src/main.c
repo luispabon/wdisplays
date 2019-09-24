@@ -938,6 +938,7 @@ static void set_clicked_head(struct wd_state *state,
       clicked->clicked = TRUE;
       flip_anim(&clicked->click_begin, tick);
     }
+    update_tick_callback(state);
   }
   state->clicked = clicked;
 }
@@ -1223,6 +1224,7 @@ static gboolean redraw_canvas(GtkWidget *widget, GdkFrameClock *frame_clock, gpo
   if (state->capture) {
     wd_capture_frame(state);
   }
+  update_tick_callback(state);
   queue_canvas_draw(state);
   return G_SOURCE_CONTINUE;
 }
