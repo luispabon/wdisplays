@@ -36,6 +36,7 @@
 #include <stdarg.h>
 
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -190,7 +191,7 @@ static int create_shm_file(size_t size, const char *fmt, ...) {
     return -1;
   }
 
-  fd = shm_open(shm_name, O_CREAT | O_RDWR, 0);
+  fd = shm_open(shm_name, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
   if (fd == -1) {
     fprintf(stderr, "shm_open: %s\n", strerror(errno));
     free(shm_name);
