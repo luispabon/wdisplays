@@ -1313,6 +1313,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
   g_signal_connect(state->canvas, "scroll-event", G_CALLBACK(canvas_scroll), state);
   g_signal_connect(state->canvas, "size-allocate", G_CALLBACK(canvas_resize), state);
   gtk_gl_area_set_use_es(GTK_GL_AREA(state->canvas), TRUE);
+  gtk_gl_area_set_required_version(GTK_GL_AREA(state->canvas), 2, 0);
   gtk_gl_area_set_has_alpha(GTK_GL_AREA(state->canvas), TRUE);
   gtk_gl_area_set_auto_render(GTK_GL_AREA(state->canvas), state->capture);
 
@@ -1382,6 +1383,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
 // END GLOBAL CALLBACKS
 
 int main(int argc, char *argv[]) {
+  g_setenv("GDK_GL", "gles", FALSE);
   GtkApplication *app = gtk_application_new("org.swaywm.sway-outputs", G_APPLICATION_FLAGS_NONE);
   g_signal_connect(app, "activate", G_CALLBACK(activate), NULL);
   int status = g_application_run(G_APPLICATION(app), argc, argv);
