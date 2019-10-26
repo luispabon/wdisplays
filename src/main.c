@@ -1359,6 +1359,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
   gtk_application_add_window(app, GTK_WINDOW(window));
   gtk_widget_show_all(window);
   g_object_unref(builder);
+  update_tick_callback(state);
 }
 // END GLOBAL CALLBACKS
 
