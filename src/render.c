@@ -75,6 +75,7 @@ struct wd_gl_data {
 };
 
 static const char *color_vertex_shader_src = "\
+precision mediump float;\n\
 attribute vec2 position;\n\
 attribute vec4 color;\n\
 varying vec4 color_out;\n\
@@ -86,12 +87,14 @@ void main(void) {\n\
 }";
 
 static const char *color_fragment_shader_src = "\
+precision mediump float;\n\
 varying vec4 color_out;\n\
 void main(void) {\n\
   gl_FragColor = color_out;\n\
 }";
 
 static const char *texture_vertex_shader_src = "\
+precision mediump float;\n\
 attribute vec2 position;\n\
 attribute vec2 uv;\n\
 varying vec2 uv_out;\n\
@@ -103,6 +106,7 @@ void main(void) {\n\
 }";
 
 static const char *texture_fragment_shader_src = "\
+precision mediump float;\n\
 varying vec2 uv_out;\n\
 uniform sampler2D texture;\n\
 uniform mat4 color_transform;\n\
