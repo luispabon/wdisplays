@@ -11,6 +11,8 @@
 #ifndef WDISPLAY_WDISPLAY_H
 #define WDISPLAY_WDISPLAY_H
 
+#include "config.h"
+
 #define HEADS_MAX 64
 #define HOVER_USECS (100 * 1000)
 

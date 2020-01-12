@@ -7,6 +7,8 @@ gtk = dependency('gtk+-3.0')
 assert(gdk.get_pkgconfig_variable('targets').split().contains('wayland'), 'Wayland GDK backend not present')
 epoxy = dependency('epoxy')
 
+configure_file(input: 'config.h.in', output: 'config.h', configuration: conf)
+
 executable(
   'wdisplays',
   [
