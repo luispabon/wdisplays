@@ -1231,6 +1231,25 @@ static void overlay_selected(GSimpleAction *action, GVariant *param, gpointer da
   }
 }
 
+static void window_state_changed(GtkWidget *window, GdkEventWindowState *event,
+    gpointer data) {
+  struct wd_state *state = data;
+  if (event->changed_mask & GDK_WINDOW_STATE_FULLSCREEN) {
+    g_object_ref(state->header_stack);
+    GtkWidget *container = gtk_widget_get_parent(state->header_stack);
+    gtk_container_remove(GTK_CONTAINER(container), state->header_stack);
+    if (event->new_window_state & GDK_WINDOW_STATE_FULLSCREEN) {
+      gtk_container_add(GTK_CONTAINER(state->main_box), state->header_stack);
+      gtk_box_reorder_child(GTK_BOX(state->main_box), state->header_stack, 0);
+    } else {
+      gtk_widget_unrealize(window);
+      gtk_window_set_titlebar(GTK_WINDOW(window), state->header_stack);
+      gtk_widget_map(window);
+    }
+    g_object_unref(state->header_stack);
+  }
+}
+
 static void activate(GtkApplication* app, gpointer user_data) {
   GdkDisplay *gdk_display = gdk_display_get_default();
   if (!GDK_IS_WAYLAND_DISPLAY(gdk_display)) {
@@ -1254,6 +1273,7 @@ static void activate(GtkApplication* app, gpointer user_data) {
 
   GtkBuilder *builder = gtk_builder_new_from_resource("/wdisplays.ui");
   GtkWidget *window = GTK_WIDGET(gtk_builder_get_object(builder, "heads_window"));
+  state->main_box = GTK_WIDGET(gtk_builder_get_object(builder, "main_box"));
   state->header_stack = GTK_WIDGET(gtk_builder_get_object(builder, "header_stack"));
   state->stack_switcher = GTK_WIDGET(gtk_builder_get_object(builder, "heads_stack_switcher"));
   state->stack = GTK_WIDGET(gtk_builder_get_object(builder, "heads_stack"));
@@ -1276,6 +1296,8 @@ static void activate(GtkApplication* app, gpointer user_data) {
   gtk_builder_add_callback_symbol(builder, "destroy", G_CALLBACK(cleanup));
   gtk_builder_connect_signals(builder, state);
   gtk_box_set_homogeneous(GTK_BOX(gtk_builder_get_object(builder, "zoom_box")), FALSE);
+
+  g_signal_connect(window, "window-state-event", G_CALLBACK(window_state_changed), state);
 
   state->canvas = wd_gl_viewport_new();
   gtk_container_add(GTK_CONTAINER(state->scroller), state->canvas);

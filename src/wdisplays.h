@@ -209,6 +209,7 @@ struct wd_state {
   bool panning;
   struct wd_point pan_last;
 
+  GtkWidget *main_box;
   GtkWidget *header_stack;
   GtkWidget *stack_switcher;
   GtkWidget *stack;
