@@ -26,8 +26,7 @@ ninja -C build
 sudo ninja -C build install
 ```
 
-Binaries are not available. Only building from source is supported, and only
-if you're using wlroots compiled from master.
+Binaries are not available. Only building from source is supported.
 
 # Usage
 
@@ -48,22 +47,18 @@ There are some options available by clicking the menu button on the top left:
 - Overlay Screen Names: Shows big names in the corner of all screens for easy
   identification. Disable if they get in the way.
 
-# FAQ (Fervently Anticpiated Quandaries)
+# FAQ
 
 ### What is this?
 
 It's intended to be the Wayland equivalent of an xrandr GUI, like [ARandR].
-
-### Help, I get errors and/or crashes!
-
-Make sure your wlroots is at version 0.7.0 or later.
 
 ### I'm using Sway, why aren't my display settings saved when I log out?
 
 Sway, like i3, doesn't save any settings unless you put them in the config
 file. See man `sway-output`. If you want to have multiple configurations
 depending on the monitors connected, you'll need to use an external program
-like [kanshi].
+like [kanshi]. Integration with that and other external daemons is planned.
 
 [kanshi]: https://github.com/emersion/kanshi
 [sway]: https://github.com/swaywm/sway
