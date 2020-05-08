@@ -1,0 +1,29 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: wdisplays
+Upstream-Contact: Jason Francis <jason@cycles.network>
+Source: <https://cyclopsian.github.io/wdisplays>
+
+Files: README.md .gitignore
+Copyright: 2020 Jason Francis <jason@cycles.network>
+License: CC0-1.0
+
+Files: resources/style.css resources/wdisplays.desktop.in resources/*.ui
+       resources/resources.xml
+Copyright: 2020 Jason Francis <jason@cycles.network>
+License: GPL-3.0-or-later
+
+Files: wdisplays.png resources/wdisplays.svg
+Copyright: 2020 Jason Francis <jason@cycles.network>
+License: CC-BY-SA-4.0
+
+Files: protocol/wlr-layer-shell-unstable-v1.xml
+Copyright: 2017 Drew DeVault
+License: MIT
+
+Files: protocol/wlr-output-management-unstable-v1.xml
+Copyright: 2019 Purism SPC
+License: MIT
+
+Files: protocol/wlr-screencopy-unstable-v1.xml
+Copyright: 2018 Simon Ser
+License: MIT

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2020 Jason Francis <jason@cycles.network>
+# SPDX-License-Identifier: CC0-1.0
 
 cc = meson.get_compiler('c')
 m_dep = cc.find_library('m', required : false)

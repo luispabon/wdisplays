@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: MIT */
-/* Copyright (C) 2019 cyclopsian */
+/* SPDX-FileCopyrightText: 2020 Jason Francis <jason@cycles.network>
+ * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include <gtk/gtk.h>
 #include <gdk/gdkwayland.h>

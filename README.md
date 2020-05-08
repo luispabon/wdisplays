@@ -1,6 +1,6 @@
 # wdisplays
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://spdx.org/licenses/MIT.html)
+[![License: GPL 3.0 or later][license-img]][license-spdx]
 
 wdisplays is a graphical application for configuring displays in Wayland
 compositors. It borrows some code from [kanshi]. It should work in any
@@ -68,3 +68,7 @@ like [kanshi].
 [kanshi]: https://github.com/emersion/kanshi
 [sway]: https://github.com/swaywm/sway
 [ARandR]: https://christian.amsuess.com/tools/arandr/
+
+[license-img]:  https://img.shields.io/badge/License-GPL%203.0%20or%20later-blue.svg?logo=gnu
+[license-spdx]: https://spdx.org/licenses/GPL-3.0-or-later.html
+

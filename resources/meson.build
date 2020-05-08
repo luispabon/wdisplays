@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2020 Jason Francis <jason@cycles.network>
+# SPDX-License-Identifier: CC0-1.0
 
 gnome = import('gnome')
 resources = gnome.compile_resources(

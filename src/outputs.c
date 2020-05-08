@@ -1,6 +1,7 @@
-/* SPDX-License-Identifier: MIT */
-/* Copyright (C) 2019 cyclopsian
- * Copyright (C) 2017-2019 emersion */
+/* SPDX-FileCopyrightText: 2019 Jason Francis <jason@cycles.network>
+ * SPDX-License-Identifier: GPL-3.0-or-later */
+/* SPDX-FileCopyrightText: 2017-2019 Simon Ser
+ * SPDX-License-Identifier: MIT */
 
 /*
  * Parts of this file are taken from emersion/kanshi:

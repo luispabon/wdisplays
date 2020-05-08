@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2020 Jason Francis <jason@cycles.network>
+# SPDX-License-Identifier: CC0-1.0
+
 wayland_scanner = find_program('wayland-scanner')
 wayland_client = dependency('wayland-client')
 wayland_protos = dependency('wayland-protocols', version: '>=1.17')
