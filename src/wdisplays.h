@@ -205,10 +205,10 @@ struct wd_state {
   unsigned int reset_idle;
 
   struct wd_render_head_data *clicked;
-  /* top left, bottom right */
-  struct wd_point click_offset;
+  struct wd_point drag_start;
+  struct wd_point head_drag_start; /* 0-1 range in head rect */
   bool panning;
-  struct wd_point pan_last;
+  struct wd_point pan_start;
 
   GtkWidget *main_box;
   GtkWidget *header_stack;

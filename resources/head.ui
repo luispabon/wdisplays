@@ -7,23 +7,6 @@
     <property name="step_increment">1</property>
     <property name="page_increment">10</property>
   </object>
-  <object class="GtkPopover" id="modes">
-    <property name="can_focus">False</property>
-    <child>
-      <object class="GtkBox" id="mode_box">
-        <property name="visible">True</property>
-        <property name="can_focus">False</property>
-        <property name="margin_start">10</property>
-        <property name="margin_end">10</property>
-        <property name="margin_top">10</property>
-        <property name="margin_bottom">10</property>
-        <property name="orientation">vertical</property>
-        <child>
-          <placeholder/>
-        </child>
-      </object>
-    </child>
-  </object>
   <object class="GtkAdjustment" id="pos_x_adjustment">
     <property name="upper">16383</property>
     <property name="step_increment">1</property>
@@ -194,6 +177,7 @@
         <property name="spacing">8</property>
         <child>
           <object class="GtkSpinButton" id="refresh">
+            <property name="name">refresh</property>
             <property name="visible">True</property>
             <property name="can_focus">True</property>
             <property name="width_chars">9</property>
@@ -245,7 +229,6 @@
         <property name="visible">True</property>
         <property name="can_focus">True</property>
         <property name="receives_default">True</property>
-        <property name="popover">transforms</property>
         <child>
           <placeholder/>
         </child>
@@ -323,6 +306,7 @@
         </child>
         <child>
           <object class="GtkSpinButton" id="width">
+            <property name="name">width</property>
             <property name="visible">True</property>
             <property name="can_focus">True</property>
             <property name="width_chars">4</property>
@@ -351,6 +335,7 @@
         </child>
         <child>
           <object class="GtkSpinButton" id="height">
+            <property name="name">height</property>
             <property name="visible">True</property>
             <property name="can_focus">True</property>
             <property name="width_chars">4</property>
@@ -371,9 +356,7 @@
             <property name="can_focus">True</property>
             <property name="receives_default">True</property>
             <property name="tooltip_text" translatable="yes">Select Mode Preset</property>
-            <property name="margin_left">8</property>
             <property name="margin_start">8</property>
-            <property name="popover">modes</property>
             <child>
               <object class="GtkImage">
                 <property name="visible">True</property>
@@ -405,77 +388,6 @@
     </child>
     <child>
       <placeholder/>
-    </child>
-  </object>
-  <object class="GtkPopover" id="transforms">
-    <property name="can_focus">False</property>
-    <property name="relative_to">rotate_button</property>
-    <child>
-      <object class="GtkBox">
-        <property name="visible">True</property>
-        <property name="can_focus">False</property>
-        <property name="margin_start">10</property>
-        <property name="margin_end">10</property>
-        <property name="margin_top">10</property>
-        <property name="margin_bottom">10</property>
-        <property name="orientation">vertical</property>
-        <child>
-          <object class="GtkModelButton" id="rotate_0">
-            <property name="visible">True</property>
-            <property name="can_focus">True</property>
-            <property name="receives_default">True</property>
-            <property name="action_name">transform.rotate_0</property>
-            <property name="text" translatable="yes">Don't Rotate</property>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">True</property>
-            <property name="position">0</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkModelButton" id="rotate_90">
-            <property name="visible">True</property>
-            <property name="can_focus">True</property>
-            <property name="receives_default">True</property>
-            <property name="action_name">transform.rotate_90</property>
-            <property name="text" translatable="yes">Rotate 90°</property>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">True</property>
-            <property name="position">1</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkModelButton" id="rotate_180">
-            <property name="visible">True</property>
-            <property name="can_focus">True</property>
-            <property name="receives_default">True</property>
-            <property name="action_name">transform.rotate_180</property>
-            <property name="text" translatable="yes">Rotate 180°</property>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">True</property>
-            <property name="position">2</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkModelButton" id="rotate_270">
-            <property name="visible">True</property>
-            <property name="can_focus">True</property>
-            <property name="receives_default">True</property>
-            <property name="action_name">transform.rotate_270</property>
-            <property name="text" translatable="yes">Rotate 270°</property>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">True</property>
-            <property name="position">3</property>
-          </packing>
-        </child>
-      </object>
     </child>
   </object>
 </interface>

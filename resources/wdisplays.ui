@@ -11,62 +11,6 @@
     <property name="step_increment">1</property>
     <property name="page_increment">10</property>
   </object>
-  <object class="GtkPopover" id="main_menu">
-    <property name="can_focus">False</property>
-    <child>
-      <object class="GtkBox">
-        <property name="visible">True</property>
-        <property name="can_focus">False</property>
-        <property name="margin_start">10</property>
-        <property name="margin_end">10</property>
-        <property name="margin_top">10</property>
-        <property name="margin_bottom">10</property>
-        <property name="orientation">vertical</property>
-        <child>
-          <object class="GtkModelButton">
-            <property name="visible">True</property>
-            <property name="can_focus">True</property>
-            <property name="receives_default">True</property>
-            <property name="action_name">app.auto-apply</property>
-            <property name="text" translatable="yes">_Automatically Apply Changes</property>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">True</property>
-            <property name="position">0</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkModelButton">
-            <property name="visible">True</property>
-            <property name="can_focus">True</property>
-            <property name="receives_default">True</property>
-            <property name="action_name">app.capture-screens</property>
-            <property name="text" translatable="yes">Show Screen Contents</property>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">True</property>
-            <property name="position">1</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkModelButton">
-            <property name="visible">True</property>
-            <property name="can_focus">True</property>
-            <property name="receives_default">True</property>
-            <property name="action_name">app.show-overlay</property>
-            <property name="text" translatable="yes">Overlay Screen Names</property>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">True</property>
-            <property name="position">2</property>
-          </packing>
-        </child>
-      </object>
-    </child>
-  </object>
   <object class="GtkWindow" id="heads_window">
     <property name="can_focus">False</property>
     <property name="title" translatable="yes">wdisplays</property>
@@ -171,8 +115,6 @@
                         <property name="visible">True</property>
                         <property name="can_focus">False</property>
                         <property name="halign">center</property>
-                        <property name="margin_left">8</property>
-                        <property name="margin_right">8</property>
                         <property name="margin_start">8</property>
                         <property name="margin_end">8</property>
                         <property name="margin_top">8</property>
@@ -248,14 +190,14 @@
               <object class="GtkButtonBox" id="zoom_box">
                 <property name="visible">True</property>
                 <property name="can_focus">False</property>
-                <property name="layout_style">expand</property>
                 <child>
                   <object class="GtkButton" id="zoom_out">
                     <property name="visible">True</property>
                     <property name="can_focus">True</property>
                     <property name="receives_default">True</property>
                     <property name="tooltip_text" translatable="yes">Zoom Out</property>
-                    <signal name="clicked" handler="zoom_out" swapped="yes"/>
+                    <property name="action_name">app.zoom-out</property>
+                    <accelerator key="minus" signal="clicked" modifiers="GDK_CONTROL_MASK"/>
                     <child>
                       <object class="GtkImage">
                         <property name="visible">True</property>
@@ -263,7 +205,6 @@
                         <property name="icon_name">zoom-out-symbolic</property>
                       </object>
                     </child>
-                    <accelerator key="minus" signal="clicked" modifiers="GDK_CONTROL_MASK"/>
                   </object>
                   <packing>
                     <property name="expand">True</property>
@@ -278,7 +219,7 @@
                     <property name="can_focus">True</property>
                     <property name="receives_default">True</property>
                     <property name="tooltip_text" translatable="yes">Zoom Reset</property>
-                    <signal name="clicked" handler="zoom_reset" swapped="yes"/>
+                    <property name="action_name">app.zoom-reset</property>
                     <accelerator key="0" signal="clicked" modifiers="GDK_CONTROL_MASK"/>
                   </object>
                   <packing>
@@ -294,7 +235,8 @@
                     <property name="can_focus">True</property>
                     <property name="receives_default">True</property>
                     <property name="tooltip_text" translatable="yes">Zoom In</property>
-                    <signal name="clicked" handler="zoom_in" swapped="yes"/>
+                    <property name="action_name">app.zoom-in</property>
+                    <accelerator key="equal" signal="clicked" modifiers="GDK_CONTROL_MASK"/>
                     <child>
                       <object class="GtkImage">
                         <property name="visible">True</property>
@@ -302,7 +244,6 @@
                         <property name="icon_name">zoom-in-symbolic</property>
                       </object>
                     </child>
-                    <accelerator key="equal" signal="clicked" modifiers="GDK_CONTROL_MASK"/>
                   </object>
                   <packing>
                     <property name="expand">True</property>
@@ -311,6 +252,9 @@
                     <property name="non_homogeneous">True</property>
                   </packing>
                 </child>
+                <style>
+                  <class name="linked"/>
+                </style>
               </object>
             </child>
             <child>
@@ -318,7 +262,6 @@
                 <property name="visible">True</property>
                 <property name="can_focus">True</property>
                 <property name="receives_default">True</property>
-                <property name="popover">main_menu</property>
                 <child>
                   <object class="GtkImage">
                     <property name="visible">True</property>
@@ -355,7 +298,7 @@
                 <property name="can_focus">True</property>
                 <property name="receives_default">True</property>
                 <property name="use_underline">True</property>
-                <signal name="clicked" handler="apply_changes" swapped="no"/>
+                <property name="action_name">app.apply-changes</property>
                 <style>
                   <class name="suggested-action"/>
                 </style>
@@ -371,7 +314,7 @@
                 <property name="can_focus">True</property>
                 <property name="receives_default">True</property>
                 <property name="use_underline">True</property>
-                <signal name="clicked" handler="cancel_changes" swapped="no"/>
+                <property name="action_name">app.cancel-changes</property>
               </object>
               <packing>
                 <property name="position">1</property>

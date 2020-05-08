@@ -3,9 +3,9 @@
 
 gnome = import('gnome')
 resources = gnome.compile_resources(
-  'waydisplay-resources', 'resources.xml',
+  'wdisplays-resources', 'resources.xml',
   source_dir : '.',
-  c_name : 'waydisplay_resources')
+  c_name : 'wdisplays_resources')
 
 scour = find_program('scour', required: false)
 
