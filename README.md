@@ -4,14 +4,16 @@
 
 wdisplays is a graphical application for configuring displays in Wayland
 compositors. It borrows some code from [kanshi]. It should work in any
-compositor that implements the wlr-output-management-unstable-v1 protocol,
-including [sway]. The goal of this project is to allow precise adjustment of
-display settings in kiosks, digital signage, and other elaborate multi-monitor
-setups.
+compositor that implements the wlr-output-management-unstable-v1 protocol.
+Compositors that are known to support the protocol are [Sway] and [Wayfire].
+The goal of this project is to allow precise adjustment of display settings in
+kiosks, digital signage, and other elaborate multi-monitor setups.
 
 ![Screenshot](wdisplays.png)
 
 # Installation
+
+[![Repology][repology-img]][repology-pkg]
 
 Check your distro for a `wdisplays` package. Known distro packages:
 
@@ -70,10 +72,19 @@ file. See man `sway-output`. If you want to have multiple configurations
 depending on the monitors connected, you'll need to use an external program
 like [kanshi]. Integration with that and other external daemons is planned.
 
+### How do I add support to my compositor?
+
+A minimal amount of code (approximately 150-200 LOC) is currently required to
+get support for this in wlroots compositors. See the diff here for a sample
+implementation on top of tinywl: [tinywl-output-management].
+
 [kanshi]: https://github.com/emersion/kanshi
-[sway]: https://github.com/swaywm/sway
+[Sway]: https://swaywm.org
+[Wayfire]: https://wayfire.org
 [ARandR]: https://christian.amsuess.com/tools/arandr/
+[tinywl-output-management]: https://git.sr.ht/~jf/tinywl-output-management/commit/87a45d89ae0e7975e2a59f84e960380dd2f5ac08
 
 [license-img]:  https://img.shields.io/badge/License-GPL%203.0%20or%20later-blue.svg?logo=gnu
 [license-spdx]: https://spdx.org/licenses/GPL-3.0-or-later.html
-
+[repology-img]: https://repology.org/badge/tiny-repos/wdisplays.svg
+[repology-pkg]: https://repology.org/project/wdisplays/versions
