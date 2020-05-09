@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Generated with glade 3.22.0 -->
+<!-- Generated with glade 3.22.2 -->
 <interface>
   <requires lib="gtk+" version="3.22"/>
   <object class="GtkAdjustment" id="height_adjustment">
@@ -33,7 +33,7 @@
     <property name="step_increment">1</property>
     <property name="page_increment">10</property>
   </object>
-  <object class="GtkGrid" id="form">
+  <template class="WdHeadForm" parent="GtkGrid">
     <property name="visible">True</property>
     <property name="can_focus">False</property>
     <property name="margin_start">8</property>
@@ -52,7 +52,7 @@
         <property name="halign">start</property>
         <property name="use_underline">True</property>
         <property name="draw_indicator">True</property>
-        <signal name="toggled" handler="enabled" swapped="no"/>
+        <signal name="toggled" handler="enabled_toggled" swapped="no"/>
       </object>
       <packing>
         <property name="left_attach">1</property>
@@ -82,7 +82,7 @@
         <property name="adjustment">scale_adjustment</property>
         <property name="digits">2</property>
         <property name="value">1</property>
-        <signal name="change-value" handler="scale" swapped="no"/>
+        <signal name="value-changed" handler="position_spin_changed" swapped="no"/>
       </object>
       <packing>
         <property name="left_attach">1</property>
@@ -186,6 +186,7 @@
             <property name="digits">3</property>
             <property name="numeric">True</property>
             <property name="update_policy">if-valid</property>
+            <signal name="value-changed" handler="mode_spin_changed" swapped="no"/>
           </object>
           <packing>
             <property name="expand">False</property>
@@ -260,7 +261,7 @@
         <property name="halign">start</property>
         <property name="use_underline">True</property>
         <property name="draw_indicator">True</property>
-        <signal name="toggled" handler="flipped" swapped="no"/>
+        <signal name="toggled" handler="flipped_toggled" swapped="no"/>
       </object>
       <packing>
         <property name="left_attach">1</property>
@@ -282,6 +283,7 @@
             <property name="adjustment">pos_x_adjustment</property>
             <property name="numeric">True</property>
             <property name="update_policy">if-valid</property>
+            <signal name="value-changed" handler="position_spin_changed" swapped="no"/>
           </object>
           <packing>
             <property name="left_attach">0</property>
@@ -298,6 +300,7 @@
             <property name="adjustment">pos_y_adjustment</property>
             <property name="numeric">True</property>
             <property name="update_policy">if-valid</property>
+            <signal name="value-changed" handler="position_spin_changed" swapped="no"/>
           </object>
           <packing>
             <property name="left_attach">2</property>
@@ -315,6 +318,7 @@
             <property name="adjustment">width_adjustment</property>
             <property name="numeric">True</property>
             <property name="update_policy">if-valid</property>
+            <signal name="value-changed" handler="mode_spin_changed" swapped="no"/>
           </object>
           <packing>
             <property name="left_attach">0</property>
@@ -344,6 +348,7 @@
             <property name="adjustment">height_adjustment</property>
             <property name="numeric">True</property>
             <property name="update_policy">if-valid</property>
+            <signal name="value-changed" handler="mode_spin_changed" swapped="no"/>
           </object>
           <packing>
             <property name="left_attach">2</property>
@@ -389,5 +394,5 @@
     <child>
       <placeholder/>
     </child>
-  </object>
+  </template>
 </interface>

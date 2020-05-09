@@ -6,6 +6,7 @@
 
 #include "wdisplays.h"
 #include "glviewport.h"
+#include "headform.h"
 
 __attribute__((noreturn)) void wd_fatal_error(int status, const char *message) {
   GtkWindow *parent = gtk_application_get_active_window(GTK_APPLICATION(g_application_get_default()));
@@ -20,86 +21,16 @@ __attribute__((noreturn)) void wd_fatal_error(int status, const char *message) {
 #define MAX_ZOOM 1000.
 #define CANVAS_MARGIN 40
 
-static const char *HEAD_PREFIX = "head";
-static const char *MODE_PREFIX = "mode";
-static const char *ROTATE_PREFIX = "rotate";
 static const char *APP_PREFIX = "app";
-
-static int32_t get_rotate_value(enum wl_output_transform transform) {
-  if (transform == WL_OUTPUT_TRANSFORM_90 || transform == WL_OUTPUT_TRANSFORM_FLIPPED_90) {
-    return 90;
-  } else if (transform == WL_OUTPUT_TRANSFORM_180 || transform == WL_OUTPUT_TRANSFORM_FLIPPED_180) {
-    return 180;
-  } else if (transform == WL_OUTPUT_TRANSFORM_270 || transform == WL_OUTPUT_TRANSFORM_FLIPPED_270) {
-    return 270;
-  }
-  return 0;
-}
 
 static bool has_changes(const struct wd_state *state) {
   g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
   for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
-    GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form_iter->data), "builder"));
-    const struct wd_head *head = g_object_get_data(G_OBJECT(form_iter->data), "head");
-    GAction *rotate_action = G_ACTION(g_object_get_data(G_OBJECT(form_iter->data), "rotate_action"));
-    if (head->enabled != gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "enabled")))) {
-      return TRUE;
-    }
-    double old_scale = round(head->scale * 100.) / 100.;
-    double new_scale = round(gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "scale"))) * 100.) / 100.;
-    if (old_scale != new_scale) {
-      return TRUE;
-    }
-    if (head->x != gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_x")))) {
-      return TRUE;
-    }
-    if (head->y != gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_y")))) {
-      return TRUE;
-    }
-    int w = head->mode != NULL ? head->mode->width : head->custom_mode.width;
-    if (w != gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "width")))) {
-      return TRUE;
-    }
-    int h = head->mode != NULL ? head->mode->height : head->custom_mode.height;
-    if (h != gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "height")))) {
-      return TRUE;
-    }
-    int r = head->mode != NULL ? head->mode->refresh : head->custom_mode.refresh;
-    if (r / 1000. != gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "refresh")))) {
-      return TRUE;
-    }
-    if (g_variant_get_int32(g_action_get_state(rotate_action)) != get_rotate_value(head->transform)) {
-      return TRUE;
-    }
-    bool flipped = head->transform == WL_OUTPUT_TRANSFORM_FLIPPED
-      || head->transform == WL_OUTPUT_TRANSFORM_FLIPPED_90
-      || head->transform == WL_OUTPUT_TRANSFORM_FLIPPED_180
-      || head->transform == WL_OUTPUT_TRANSFORM_FLIPPED_270;
-    if (flipped != gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "flipped")))) {
-      return TRUE;
-    }
+    if (wd_head_form_has_changes(WD_HEAD_FORM(form_iter->data),
+          g_object_get_data(G_OBJECT(form_iter->data), "head")))
+      return true;
   }
-  return FALSE;
-}
-
-void fill_output_from_form(struct wd_head_config *output, GtkWidget *form) {
-  GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form), "builder"));
-  output->head = g_object_get_data(G_OBJECT(form), "head");
-  output->enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "enabled")));
-  output->scale = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "scale")));
-  output->x = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_x")));
-  output->y = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_y")));
-  output->width = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "width")));
-  output->height = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "height")));
-  output->refresh = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "refresh"))) * 1000.;
-  int32_t rotate = g_variant_get_int32(g_action_get_state(G_ACTION(g_object_get_data(G_OBJECT(form), "rotate_action"))));
-  gboolean flipped = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "flipped")));
-  switch (rotate) {
-    case 0: output->transform = flipped ? WL_OUTPUT_TRANSFORM_FLIPPED : WL_OUTPUT_TRANSFORM_NORMAL; break;
-    case 90: output->transform = flipped ? WL_OUTPUT_TRANSFORM_FLIPPED_90 : WL_OUTPUT_TRANSFORM_90; break;
-    case 180: output->transform = flipped ? WL_OUTPUT_TRANSFORM_FLIPPED_180 : WL_OUTPUT_TRANSFORM_180; break;
-    case 270: output->transform = flipped ? WL_OUTPUT_TRANSFORM_FLIPPED_270 : WL_OUTPUT_TRANSFORM_270; break;
-  }
+  return false;
 }
 
 static gboolean send_apply(gpointer data) {
@@ -111,7 +42,8 @@ static gboolean send_apply(gpointer data) {
   for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
     struct wd_head_config *output = calloc(1, sizeof(*output));
     wl_list_insert(outputs, &output->link);
-    fill_output_from_form(output, GTK_WIDGET(form_iter->data));
+    output->head = g_object_get_data(G_OBJECT(form_iter->data), "head");
+    wd_head_form_fill_config(WD_HEAD_FORM(form_iter->data), output);
   }
   GdkWindow *window = gtk_widget_get_window(state->stack);
   GdkDisplay *display = gdk_window_get_display(window);
@@ -184,23 +116,21 @@ static void update_canvas_size(struct wd_state *state) {
 
   g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
   for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
-    GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form_iter->data), "builder"));
-    gboolean enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "enabled")));
-    if (enabled) {
-      int x1 = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_x")));
-      int y1 = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_y")));
-      int w = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "width")));
-      int h = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "height")));
-      int x2 = x1 + w;
-      int y2 = y1 + w;
-      double scale = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "scale")));
-      if (scale > 0.) {
-        w /= scale;
-        h /= scale;
+    WdHeadForm *form = WD_HEAD_FORM(form_iter->data);
+    if (wd_head_form_get_enabled(form)) {
+      WdHeadDimensions dim;
+      wd_head_form_get_dimensions(form, &dim);
+      int h = dim.h;
+      int w = dim.w;
+      int x2 = dim.x + w;
+      int y2 = dim.x + h;
+      if (dim.scale > 0.) {
+        w /= dim.scale;
+        h /= dim.scale;
       }
-      xmin = MIN(xmin, x1);
+      xmin = MIN(xmin, dim.x);
       xmax = MAX(xmax, x2);
-      ymin = MIN(ymin, y1);
+      ymin = MIN(ymin, dim.y);
       ymax = MAX(ymax, y2);
     }
   }
@@ -319,11 +249,6 @@ static inline void color_to_float_array(GtkStyleContext *ctx,
   out[3] = color.alpha;
 }
 
-static unsigned form_get_rotation(GtkWidget *form) {
-  int32_t rotate = g_variant_get_int32(g_action_get_state(G_ACTION(g_object_get_data(G_OBJECT(form), "rotate_action"))));
-  return rotate / 90;
-}
-
 #define SWAP(_type, _a, _b) { _type _tmp = (_a); (_a) = (_b); (_b) = _tmp; }
 
 static void queue_canvas_draw(struct wd_state *state) {
@@ -341,14 +266,13 @@ static void queue_canvas_draw(struct wd_state *state) {
 
   g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
   for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
-    GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form_iter->data), "builder"));
-    gboolean enabled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "enabled")));
-    if (enabled) {
-      int x = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_x")));
-      int y = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "pos_y")));
-      int w = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "width")));
-      int h = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "height")));
-      double scale = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "scale")));
+    WdHeadForm *form = WD_HEAD_FORM(form_iter->data);
+    if (wd_head_form_get_enabled(form)) {
+      WdHeadDimensions dim;
+      wd_head_form_get_dimensions(form, &dim);
+      double w = dim.w;
+      double h = dim.h;
+      double scale = dim.scale;
       if (scale <= 0.)
         scale = 1.;
 
@@ -358,13 +282,13 @@ static void queue_canvas_draw(struct wd_state *state) {
         wl_list_insert(&state->render.heads, &head->render->link);
       }
       struct wd_render_head_data *render = head->render;
-      render->queued.rotation = form_get_rotation(GTK_WIDGET(form_iter->data));
+      render->queued.rotation = dim.rotation_id;
       if (render->queued.rotation & 1) {
         SWAP(int, w, h);
       }
-      render->queued.x_invert = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gtk_builder_get_object(builder, "flipped")));
-      render->x1 = floor(x * state->zoom - state->render.scroll_x - state->render.x_origin);
-      render->y1 = floor(y * state->zoom - state->render.scroll_y - state->render.y_origin);
+      render->queued.x_invert = dim.flipped;
+      render->x1 = floor(dim.x * state->zoom - state->render.scroll_x - state->render.x_origin);
+      render->y1 = floor(dim.y * state->zoom - state->render.scroll_y - state->render.y_origin);
       render->x2 = floor(render->x1 + w * state->zoom / scale);
       render->y2 = floor(render->y1 + h * state->zoom / scale);
     }
@@ -372,7 +296,6 @@ static void queue_canvas_draw(struct wd_state *state) {
   gtk_gl_area_queue_render(GTK_GL_AREA(state->canvas));
 }
 
-// BEGIN FORM CALLBACKS
 static void show_apply(struct wd_state *state) {
   const gchar *page = "title";
   if (has_changes(state)) {
@@ -385,187 +308,12 @@ static void show_apply(struct wd_state *state) {
   gtk_stack_set_visible_child_name(GTK_STACK(state->header_stack), page);
 }
 
-static void update_ui(struct wd_state *state) {
+static void update_ui(WdHeadForm *form, enum wd_head_fields fields,
+    gpointer data) {
+  struct wd_state *state = data;
   show_apply(state);
   update_canvas_size(state);
   queue_canvas_draw(state);
-}
-
-static void update_sensitivity(GtkWidget *form) {
-  GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form), "builder"));
-  GtkWidget *enabled = GTK_WIDGET(gtk_builder_get_object(builder, "enabled"));
-  bool enabled_toggled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(enabled));
-
-  g_autoptr(GList) children = gtk_container_get_children(GTK_CONTAINER(form));
-  for (GList *child = children; child != NULL; child = child->next) {
-    GtkWidget *widget = GTK_WIDGET(child->data);
-    if (widget != enabled) {
-      gtk_widget_set_sensitive(widget, enabled_toggled);
-    }
-  }
-}
-
-static void rotate_selected(GSimpleAction *action, GVariant *param, gpointer data) {
-  const struct wd_head *head = g_object_get_data(G_OBJECT(data), "head");
-  GtkBuilder *builder = GTK_BUILDER(g_object_get_data(data, "builder"));
-  GtkWidget *rotate_button = GTK_WIDGET(gtk_builder_get_object(builder, "rotate_button"));
-  GMenuModel *menu = gtk_menu_button_get_menu_model(GTK_MENU_BUTTON(rotate_button));
-  int items = g_menu_model_get_n_items(menu);
-  for (int i = 0; i < items; i++) {
-    g_autoptr(GVariant) target = g_menu_model_get_item_attribute_value(menu, i, G_MENU_ATTRIBUTE_TARGET, NULL);
-    g_autoptr(GVariant) label = g_menu_model_get_item_attribute_value(menu, i, G_MENU_ATTRIBUTE_LABEL, NULL);
-    if (g_variant_get_int32(target) == g_variant_get_int32(param)) {
-      gtk_button_set_label(GTK_BUTTON(rotate_button), g_variant_get_string(label, NULL));
-      break;
-    }
-  }
-  g_simple_action_set_state(action, param);
-  update_ui(head->state);
-}
-
-static GVariant *create_mode_variant(int32_t w, int32_t h, int32_t r) {
-  GVariant * const children[] = {
-    g_variant_new_int32(w),
-    g_variant_new_int32(h),
-    g_variant_new_int32(r),
-  };
-  return g_variant_new_tuple(children, G_N_ELEMENTS(children));
-}
-
-struct vid_mode {
-  int32_t width;
-  int32_t height;
-  int32_t refresh;
-};
-
-static void unpack_mode_variant(GVariant *value, struct vid_mode *mode) {
-  g_autoptr(GVariant) width = g_variant_get_child_value(value, 0);
-  mode->width = g_variant_get_int32(width);
-  g_autoptr(GVariant) height = g_variant_get_child_value(value, 1);
-  mode->height = g_variant_get_int32(height);
-  g_autoptr(GVariant) refresh = g_variant_get_child_value(value, 2);
-  mode->refresh = g_variant_get_int32(refresh);
-}
-
-static void mode_spin_changed(GtkSpinButton *spin_button, gpointer data) {
-  GtkWidget *form = data;
-  const struct wd_head *head = g_object_get_data(G_OBJECT(form), "head");
-  struct vid_mode mode;
-  GAction *mode_action = G_ACTION(g_object_get_data(G_OBJECT(form), "mode_action"));
-  GVariant *value = g_action_get_state(mode_action);
-  unpack_mode_variant(value, &mode);
-  if (strcmp(gtk_widget_get_name(GTK_WIDGET(spin_button)), "width") == 0) {
-    mode.width = gtk_spin_button_get_value(spin_button);
-  } else if (strcmp(gtk_widget_get_name(GTK_WIDGET(spin_button)), "height") == 0) {
-    mode.height = gtk_spin_button_get_value(spin_button);
-  } else if (strcmp(gtk_widget_get_name(GTK_WIDGET(spin_button)), "refresh") == 0) {
-    mode.refresh = gtk_spin_button_get_value(spin_button) * 1000.;
-  }
-  g_action_activate(mode_action, create_mode_variant(mode.width, mode.height, mode.refresh));
-  update_ui(head->state);
-}
-
-static void mode_selected(GSimpleAction *action, GVariant *param, gpointer data) {
-  GtkWidget *form = data;
-  const struct wd_head *head = g_object_get_data(G_OBJECT(form), "head");
-  GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form), "builder"));
-  struct vid_mode mode;
-  unpack_mode_variant(param, &mode);
-
-  g_simple_action_set_state(action, param);
-  gtk_spin_button_set_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "width")), mode.width);
-  gtk_spin_button_set_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "height")), mode.height);
-  gtk_spin_button_set_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "refresh")), mode.refresh / 1000.);
-  update_ui(head->state);
-}
-// END FORM CALLBACKS
-
-static void update_head_form(GtkWidget *form, unsigned int fields) {
-  GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form), "builder"));
-  GtkWidget *description = GTK_WIDGET(gtk_builder_get_object(builder, "description"));
-  GtkWidget *physical_size = GTK_WIDGET(gtk_builder_get_object(builder, "physical_size"));
-  GtkWidget *enabled = GTK_WIDGET(gtk_builder_get_object(builder, "enabled"));
-  GtkWidget *scale = GTK_WIDGET(gtk_builder_get_object(builder, "scale"));
-  GtkWidget *pos_x = GTK_WIDGET(gtk_builder_get_object(builder, "pos_x"));
-  GtkWidget *pos_y = GTK_WIDGET(gtk_builder_get_object(builder, "pos_y"));
-  GtkWidget *mode_button = GTK_WIDGET(gtk_builder_get_object(builder, "mode_button"));
-  GtkWidget *flipped = GTK_WIDGET(gtk_builder_get_object(builder, "flipped"));
-  const struct wd_head *head = g_object_get_data(G_OBJECT(form), "head");
-  GAction *mode_action = G_ACTION(g_object_get_data(G_OBJECT(form), "mode_action"));
-  GAction *rotate_action = G_ACTION(g_object_get_data(G_OBJECT(form), "rotate_action"));
-
-  if (fields & WD_FIELD_NAME) {
-    gtk_container_child_set(GTK_CONTAINER(head->state->stack), form, "title", head->name, NULL);
-  }
-  if (fields & WD_FIELD_DESCRIPTION) {
-    gtk_label_set_text(GTK_LABEL(description), head->description);
-  }
-  if (fields & WD_FIELD_PHYSICAL_SIZE) {
-    g_autofree gchar *physical_str = g_strdup_printf("%dmm × %dmm", head->phys_width, head->phys_height);
-    gtk_label_set_text(GTK_LABEL(physical_size), physical_str);
-  }
-  if (fields & WD_FIELD_ENABLED) {
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enabled), head->enabled);
-  }
-  if (fields & WD_FIELD_SCALE) {
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(scale), head->scale);
-  }
-  if (fields & WD_FIELD_POSITION) {
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(pos_x), head->x);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(pos_y), head->y);
-  }
-
-  if (fields & WD_FIELD_MODE) {
-    GMenu *mode_menu = g_menu_new();
-    struct wd_mode *mode;
-    g_autofree gchar *action = g_strdup_printf("%s.%s", HEAD_PREFIX, MODE_PREFIX);
-    wl_list_for_each(mode, &head->modes, link) {
-      g_autofree gchar *name = g_strdup_printf("%d×%d@%0.3fHz", mode->width, mode->height, mode->refresh / 1000.);
-      GMenuItem *item = g_menu_item_new(name, action);
-      g_menu_item_set_attribute_value(item, G_MENU_ATTRIBUTE_TARGET,
-          create_mode_variant(mode->width, mode->height, mode->refresh));
-      g_menu_append_item(mode_menu, item);
-    }
-    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(mode_button), G_MENU_MODEL(mode_menu));
-    // Mode entries
-    int w = head->custom_mode.width;
-    int h = head->custom_mode.height;
-    int r = head->custom_mode.refresh;
-    if (head->enabled && head->mode != NULL) {
-      w = head->mode->width;
-      h = head->mode->height;
-      r = head->mode->refresh;
-    } else if (!head->enabled && w == 0 && h == 0) {
-      struct wd_mode *mode;
-      wl_list_for_each(mode, &head->modes, link) {
-        if (mode->preferred) {
-          w = mode->width;
-          h = mode->height;
-          r = mode->refresh;
-          break;
-        }
-      }
-    }
-
-    g_action_change_state(mode_action, create_mode_variant(w, h, r));
-  }
-
-  if (fields & WD_FIELD_TRANSFORM) {
-    int active_rotate = get_rotate_value(head->transform);
-    g_action_change_state(rotate_action, g_variant_new_int32(active_rotate));
-
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(flipped),
-        head->transform == WL_OUTPUT_TRANSFORM_FLIPPED
-        || head->transform == WL_OUTPUT_TRANSFORM_FLIPPED_90
-        || head->transform == WL_OUTPUT_TRANSFORM_FLIPPED_180
-        || head->transform == WL_OUTPUT_TRANSFORM_FLIPPED_270);
-  }
-
-  // Sync state
-  if (fields & WD_FIELD_ENABLED) {
-    update_sensitivity(form);
-  }
-  update_ui(head->state);
 }
 
 void wd_ui_reset_heads(struct wd_state *state) {
@@ -578,68 +326,19 @@ void wd_ui_reset_heads(struct wd_state *state) {
   struct wd_head *head;
   int i = 0;
   wl_list_for_each(head, &state->heads, link) {
-    GtkBuilder *builder;
-    GtkWidget *form;
     if (form_iter == NULL) {
-      builder = gtk_builder_new_from_resource("/head.ui");
-      form = GTK_WIDGET(gtk_builder_get_object(builder, "form"));
-      g_object_set_data(G_OBJECT(form), "builder", builder);
+      GtkWidget *form = wd_head_form_new();;
       g_object_set_data(G_OBJECT(form), "head", head);
+      g_signal_connect(form, "changed", G_CALLBACK(update_ui), state);
       g_autofree gchar *page_name = g_strdup_printf("%d", i);
       gtk_stack_add_titled(GTK_STACK(state->stack), form, page_name, head->name);
-
-      GtkWidget *mode_button = GTK_WIDGET(gtk_builder_get_object(builder, "mode_button"));
-      GtkWidget *rotate_button = GTK_WIDGET(gtk_builder_get_object(builder, "rotate_button"));
-
-      GSimpleActionGroup *head_actions = g_simple_action_group_new();
-      gtk_widget_insert_action_group(mode_button, HEAD_PREFIX, G_ACTION_GROUP(head_actions));
-      gtk_widget_insert_action_group(rotate_button, HEAD_PREFIX, G_ACTION_GROUP(head_actions));
-
-      GMenu *rotate_menu = g_menu_new();
-      g_menu_append(rotate_menu, "Don't Rotate", "head.rotate(0)");
-      g_menu_append(rotate_menu, "Rotate 90°", "head.rotate(90)");
-      g_menu_append(rotate_menu, "Rotate 180°", "head.rotate(180)");
-      g_menu_append(rotate_menu, "Rotate 270°", "head.rotate(270)");
-      gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(rotate_button), G_MENU_MODEL(rotate_menu));
-
-      static const GVariantType * const mode_types[] = {
-        G_VARIANT_TYPE_INT32,
-        G_VARIANT_TYPE_INT32,
-        G_VARIANT_TYPE_INT32
-      };
-      GSimpleAction *action = g_simple_action_new_stateful("mode",
-          g_variant_type_new_tuple(mode_types, G_N_ELEMENTS(mode_types)),
-          create_mode_variant(0, 0, 0));
-      g_action_map_add_action(G_ACTION_MAP(head_actions), G_ACTION(action));
-      g_signal_connect(action, "change-state", G_CALLBACK(mode_selected), form);
-      g_object_set_data(G_OBJECT(form), "mode_action", action);
-      g_object_unref(action);
-
-      action = g_simple_action_new_stateful(ROTATE_PREFIX, G_VARIANT_TYPE_INT32,
-          g_variant_new_int32(0));
-      g_action_map_add_action(G_ACTION_MAP(head_actions), G_ACTION(action));
-      g_signal_connect(action, "change-state", G_CALLBACK(rotate_selected), form);
-      g_object_set_data(G_OBJECT(form), "rotate_action", action);
-      g_object_unref(action);
-
-      g_object_unref(head_actions);
-      update_head_form(form, WD_FIELDS_ALL);
-
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "enabled"), "toggled", G_CALLBACK(update_sensitivity), form);
-      g_signal_connect(gtk_builder_get_object(builder, "width"), "value-changed", G_CALLBACK(mode_spin_changed), form);
-      g_signal_connect(gtk_builder_get_object(builder, "height"), "value-changed", G_CALLBACK(mode_spin_changed), form);
-      g_signal_connect(gtk_builder_get_object(builder, "refresh"), "value-changed", G_CALLBACK(mode_spin_changed), form);
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "enabled"), "toggled", G_CALLBACK(update_ui), state);
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "scale"), "value-changed", G_CALLBACK(update_ui), state);
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "pos_x"), "value-changed", G_CALLBACK(update_ui), state);
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "pos_y"), "value-changed", G_CALLBACK(update_ui), state);
-      g_signal_connect_swapped(gtk_builder_get_object(builder, "flipped"), "toggled", G_CALLBACK(update_ui), state);
-
+      wd_head_form_update(WD_HEAD_FORM(form), head, WD_FIELDS_ALL);
     } else {
-      form = form_iter->data;
+      GtkWidget *form = GTK_WIDGET(form_iter->data);
       if (head != g_object_get_data(G_OBJECT(form), "head")) {
         g_object_set_data(G_OBJECT(form), "head", head);
-        update_head_form(form, WD_FIELDS_ALL);
+        gtk_container_child_set(GTK_CONTAINER(state->stack), form, "title", head->name, NULL);
+        wd_head_form_update(WD_HEAD_FORM(form), head, WD_FIELDS_ALL);
       }
       form_iter = form_iter->next;
     }
@@ -647,23 +346,24 @@ void wd_ui_reset_heads(struct wd_state *state) {
   }
   // remove everything else
   for (; form_iter != NULL; form_iter = form_iter->next) {
-    GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form_iter->data), "builder"));
-    g_object_unref(builder);
     gtk_container_remove(GTK_CONTAINER(state->stack), GTK_WIDGET(form_iter->data));
   }
   update_canvas_size(state);
   queue_canvas_draw(state);
 }
 
-void wd_ui_reset_head(const struct wd_head *head, unsigned int fields) {
+void wd_ui_reset_head(const struct wd_head *head, enum wd_head_fields fields) {
   if (head->state->stack == NULL) {
     return;
   }
   g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(head->state->stack));
   for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
-    const struct wd_head *other = g_object_get_data(G_OBJECT(form_iter->data), "head");
+    GtkWidget *form = GTK_WIDGET(form_iter->data);
+    const struct wd_head *other = g_object_get_data(G_OBJECT(form), "head");
     if (head == other) {
-      update_head_form(GTK_WIDGET(form_iter->data), fields);
+      if (fields & WD_FIELD_NAME)
+        gtk_container_child_set(GTK_CONTAINER(head->state->stack), form, "title", head->name, NULL);
+      wd_head_form_update(WD_HEAD_FORM(form), head, fields);
       break;
     }
   }
@@ -675,7 +375,10 @@ void wd_ui_reset_all(struct wd_state *state) {
   wd_ui_reset_heads(state);
   g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
   for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
-    update_head_form(GTK_WIDGET(form_iter->data), WD_FIELDS_ALL);
+    GtkWidget *form = GTK_WIDGET(form_iter->data);
+    struct wd_head *head = g_object_get_data(G_OBJECT(form), "head");
+    gtk_container_child_set(GTK_CONTAINER(state->stack), form, "title", head->name, NULL);
+    wd_head_form_update(WD_HEAD_FORM(form_iter->data), head, WD_FIELDS_ALL);
   }
   update_canvas_size(state);
   queue_canvas_draw(state);
@@ -950,99 +653,92 @@ static void canvas_drag1_update(GtkGestureDrag *drag,
 
   if (state->clicked == NULL)
     return;
-  GtkWidget *form = NULL;
+  WdHeadForm *form = NULL;
   g_autoptr(GList) forms = gtk_container_get_children(GTK_CONTAINER(state->stack));
   for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
     const struct wd_head *other = g_object_get_data(G_OBJECT(form_iter->data), "head");
     if (state->clicked == other->render) {
-      form = form_iter->data;
+      form = WD_HEAD_FORM(form_iter->data);
       break;
     }
   }
-  if (form != NULL) {
-    GtkBuilder *builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form), "builder"));
-    struct wd_point size = {
-      .x = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "width"))),
-      .y = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "height"))),
-    };
-    double scale = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(builder, "scale")));
-    if (scale > 0.) {
-      size.x /= scale;
-      size.y /= scale;
-    }
-    unsigned rot = form_get_rotation(form);
-    if (rot & 1) {
-      SWAP(int, size.x, size.y);
-    }
-    struct wd_point tl = { /* top left */
-      .x = (state->drag_start.x + delta_x - state->head_drag_start.x * size.x * state->zoom
-          + state->render.x_origin + state->render.scroll_x) / state->zoom,
-      .y = (state->drag_start.y + delta_y - state->head_drag_start.y * size.y * state->zoom
-          + state->render.y_origin + state->render.scroll_y) / state->zoom
-    };
-
-    const struct wd_point br = { /* bottom right */
-      .x = tl.x + size.x,
-      .y = tl.y + size.y
-    };
-    struct wd_point new_pos = tl;
-    float snap = SNAP_DIST / state->zoom;
-
-    GdkEvent *event = gtk_get_current_event();
-    GdkModifierType mod_state = event->motion.state;
-
-    /* snapping */
-    for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
-      const struct wd_head *other = g_object_get_data(G_OBJECT(form_iter->data), "head");
-      if (other->render != state->clicked && !(mod_state & GDK_SHIFT_MASK)) {
-        GtkBuilder *other_builder = GTK_BUILDER(g_object_get_data(G_OBJECT(form_iter->data), "builder"));
-        double x1 = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(other_builder, "pos_x")));
-        double y1 = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(other_builder, "pos_y")));
-        double w = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(other_builder, "width")));
-        double h = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(other_builder, "height")));
-        scale = gtk_spin_button_get_value(GTK_SPIN_BUTTON(gtk_builder_get_object(other_builder, "scale")));
-        if (scale > 0.) {
-          w /= scale;
-          h /= scale;
-        }
-        rot = form_get_rotation(GTK_WIDGET(form_iter->data));
-        if (rot & 1) {
-          SWAP(int, w, h);
-        }
-        double x2 = x1 + w;
-        double y2 = y1 + h;
-        if (fabs(br.x) <= snap)
-          new_pos.x = -size.x;
-        if (fabs(br.y) <= snap)
-          new_pos.y = -size.y;
-        if (fabs(br.x - x1) <= snap)
-          new_pos.x = x1 - size.x;
-        if (fabs(br.x - x2) <= snap)
-          new_pos.x = x2 - size.x;
-        if (fabs(br.y - y1) <= snap)
-          new_pos.y = y1 - size.y;
-        if (fabs(br.y - y2) <= snap)
-          new_pos.y = y2 - size.y;
-
-        if (fabs(tl.x) <= snap)
-          new_pos.x = 0.;
-        if (fabs(tl.y) <= snap)
-          new_pos.y = 0.;
-        if (fabs(tl.x - x1) <= snap)
-          new_pos.x = x1;
-        if (fabs(tl.x - x2) <= snap)
-          new_pos.x = x2;
-        if (fabs(tl.y - y1) <= snap)
-          new_pos.y = y1;
-        if (fabs(tl.y - y2) <= snap)
-          new_pos.y = y2;
-      }
-    }
-    GtkWidget *pos_x = GTK_WIDGET(gtk_builder_get_object(builder, "pos_x"));
-    GtkWidget *pos_y = GTK_WIDGET(gtk_builder_get_object(builder, "pos_y"));
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(pos_x), new_pos.x);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(pos_y), new_pos.y);
+  if (!form)
+    return;
+  WdHeadDimensions dim;
+  wd_head_form_get_dimensions(form, &dim);
+  struct wd_point size = { .x = dim.w, .y = dim.h };
+  if (dim.scale > 0.) {
+    size.x /= dim.scale;
+    size.y /= dim.scale;
   }
+  if (dim.rotation_id & 1) {
+    SWAP(int, size.x, size.y);
+  }
+  struct wd_point tl = { /* top left */
+    .x = (state->drag_start.x + delta_x - state->head_drag_start.x * size.x * state->zoom
+        + state->render.x_origin + state->render.scroll_x) / state->zoom,
+    .y = (state->drag_start.y + delta_y - state->head_drag_start.y * size.y * state->zoom
+        + state->render.y_origin + state->render.scroll_y) / state->zoom
+  };
+
+  const struct wd_point br = { /* bottom right */
+    .x = tl.x + size.x,
+    .y = tl.y + size.y
+  };
+  struct wd_point new_pos = tl;
+  float snap = SNAP_DIST / state->zoom;
+
+  GdkEvent *event = gtk_get_current_event();
+  GdkModifierType mod_state = event->motion.state;
+
+  /* snapping */
+  for (GList *form_iter = forms; form_iter != NULL; form_iter = form_iter->next) {
+    WdHeadForm *other_form = WD_HEAD_FORM(form_iter->data);
+    const struct wd_head *other = g_object_get_data(G_OBJECT(other_form), "head");
+    if (other->render != state->clicked && !(mod_state & GDK_SHIFT_MASK)) {
+      WdHeadDimensions other_dim;
+      wd_head_form_get_dimensions(other_form, &other_dim);
+      double x1 = other_dim.x;
+      double y1 = other_dim.y;
+      double w = other_dim.w;
+      double h = other_dim.h;
+      if (other_dim.scale > 0.) {
+        w /= other_dim.scale;
+        h /= other_dim.scale;
+      }
+      if (other_dim.rotation_id & 1) {
+        SWAP(int, w, h);
+      }
+      double x2 = x1 + w;
+      double y2 = y1 + h;
+      if (fabs(br.x) <= snap)
+        new_pos.x = -size.x;
+      if (fabs(br.y) <= snap)
+        new_pos.y = -size.y;
+      if (fabs(br.x - x1) <= snap)
+        new_pos.x = x1 - size.x;
+      if (fabs(br.x - x2) <= snap)
+        new_pos.x = x2 - size.x;
+      if (fabs(br.y - y1) <= snap)
+        new_pos.y = y1 - size.y;
+      if (fabs(br.y - y2) <= snap)
+        new_pos.y = y2 - size.y;
+
+      if (fabs(tl.x) <= snap)
+        new_pos.x = 0.;
+      if (fabs(tl.y) <= snap)
+        new_pos.y = 0.;
+      if (fabs(tl.x - x1) <= snap)
+        new_pos.x = x1;
+      if (fabs(tl.x - x2) <= snap)
+        new_pos.x = x2;
+      if (fabs(tl.y - y1) <= snap)
+        new_pos.y = y1;
+      if (fabs(tl.y - y2) <= snap)
+        new_pos.y = y2;
+    }
+  }
+  wd_head_form_set_position(form, new_pos.x, new_pos.y);
 }
 
 static void canvas_drag1_end(GtkGestureDrag *drag,
@@ -1230,7 +926,8 @@ static void activate(GtkApplication* app, gpointer user_data) {
   state->reset_idle = -1;
 
   GtkCssProvider *css_provider = gtk_css_provider_new();
-  gtk_css_provider_load_from_resource(css_provider, "/style.css");
+  gtk_css_provider_load_from_resource(css_provider,
+      WDISPLAYS_RESOURCE_PREFIX "/style.css");
   gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(css_provider),
       GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 
@@ -1238,7 +935,8 @@ static void activate(GtkApplication* app, gpointer user_data) {
   state->grabbing_cursor = gdk_cursor_new_from_name(gdk_display, "grabbing");
   state->move_cursor = gdk_cursor_new_from_name(gdk_display, "move");
 
-  GtkBuilder *builder = gtk_builder_new_from_resource("/wdisplays.ui");
+  GtkBuilder *builder = gtk_builder_new_from_resource(
+      WDISPLAYS_RESOURCE_PREFIX "/wdisplays.ui");
   GtkWidget *window = GTK_WIDGET(gtk_builder_get_object(builder, "heads_window"));
   state->main_box = GTK_WIDGET(gtk_builder_get_object(builder, "main_box"));
   state->header_stack = GTK_WIDGET(gtk_builder_get_object(builder, "header_stack"));

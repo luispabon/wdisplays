@@ -20,6 +20,8 @@
 #include <stdbool.h>
 #include <wayland-client.h>
 
+#include "headform.h"
+
 struct zxdg_output_v1;
 struct zxdg_output_manager_v1;
 struct zwlr_output_mode_v1;
@@ -38,18 +40,6 @@ struct _GdkCursor;
 typedef struct _GdkCursor GdkCursor;
 struct _cairo_surface;
 typedef struct _cairo_surface cairo_surface_t;
-
-enum wd_head_fields {
-  WD_FIELD_NAME           = 1 << 0,
-  WD_FIELD_ENABLED        = 1 << 1,
-  WD_FIELD_DESCRIPTION    = 1 << 2,
-  WD_FIELD_PHYSICAL_SIZE  = 1 << 3,
-  WD_FIELD_SCALE          = 1 << 4,
-  WD_FIELD_POSITION       = 1 << 5,
-  WD_FIELD_MODE           = 1 << 6,
-  WD_FIELD_TRANSFORM      = 1 << 7,
-  WD_FIELDS_ALL           = (1 << 8) - 1
-};
 
 struct wd_output {
   struct wd_state *state;
@@ -301,7 +291,7 @@ void wd_ui_reset_heads(struct wd_state *state);
  * Updates the UI form for a single head. Useful for when the compositor
  * notifies us of updated configuration caused by another program.
  */
-void wd_ui_reset_head(const struct wd_head *head, unsigned int fields);
+void wd_ui_reset_head(const struct wd_head *head, enum wd_head_fields fields);
 
 /*
  * Updates the stack and all forms to the last known server state.

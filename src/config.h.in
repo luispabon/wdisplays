@@ -6,5 +6,6 @@
 
 #define WDISPLAYS_APP_ID "@app_id@"
 #define WDISPLAYS_VERSION "@version@"
+#define WDISPLAYS_RESOURCE_PREFIX "@resource_prefix@"
 
 #endif

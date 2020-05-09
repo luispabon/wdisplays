@@ -15,10 +15,11 @@ executable(
   'wdisplays',
   [
     'main.c',
-    'outputs.c',
-    'render.c',
     'glviewport.c',
+    'headform.c',
+    'outputs.c',
     'overlay.c',
+    'render.c',
     resources,
   ],
   dependencies : [

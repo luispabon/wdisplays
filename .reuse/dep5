@@ -8,7 +8,7 @@ Copyright: 2020 Jason Francis <jason@cycles.network>
 License: CC0-1.0
 
 Files: resources/style.css resources/wdisplays.desktop.in resources/*.ui
-       resources/resources.xml
+       resources/resources.xml.in
 Copyright: 2020 Jason Francis <jason@cycles.network>
 License: GPL-3.0-or-later
 

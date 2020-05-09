@@ -1,9 +1,15 @@
 # SPDX-FileCopyrightText: 2020 Jason Francis <jason@cycles.network>
 # SPDX-License-Identifier: CC0-1.0
 
+resources_xml = configure_file(
+  input: 'resources.xml.in',
+  output: 'resources.xml',
+  configuration: conf
+)
+
 gnome = import('gnome')
 resources = gnome.compile_resources(
-  'wdisplays-resources', 'resources.xml',
+  'wdisplays-resources', resources_xml,
   source_dir : '.',
   c_name : 'wdisplays_resources')
 

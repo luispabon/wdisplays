@@ -3,9 +3,11 @@
 
 project('network.cycles.wdisplays', 'c', license: 'MIT', version: '1.0')
 
-conf = configuration_data()
-conf.set('app_id', meson.project_name())
-conf.set('version', meson.project_version())
+conf = configuration_data({
+  'app_id': meson.project_name(),
+  'version': meson.project_version(),
+  'resource_prefix': '/' / '/'.join(meson.project_name().split('.')),
+})
 
 subdir('protocol')
 subdir('resources')
