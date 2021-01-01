@@ -534,20 +534,20 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
 
   if (strcmp(interface, zwlr_output_manager_v1_interface.name) == 0) {
     state->output_manager = wl_registry_bind(registry, name,
-        &zwlr_output_manager_v1_interface, version);
+        &zwlr_output_manager_v1_interface, 1);
     zwlr_output_manager_v1_add_listener(state->output_manager,
         &output_manager_listener, state);
   } else if (strcmp(interface, zxdg_output_manager_v1_interface.name) == 0) {
     state->xdg_output_manager = wl_registry_bind(registry, name,
-        &zxdg_output_manager_v1_interface, version);
+        &zxdg_output_manager_v1_interface, 2);
   } else if(strcmp(interface, zwlr_screencopy_manager_v1_interface.name) == 0) {
     state->copy_manager = wl_registry_bind(registry, name,
-        &zwlr_screencopy_manager_v1_interface, version);
+        &zwlr_screencopy_manager_v1_interface, 1);
   } else if(strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
     state->layer_shell = wl_registry_bind(registry, name,
-        &zwlr_layer_shell_v1_interface, version);
+        &zwlr_layer_shell_v1_interface, 1);
   } else if(strcmp(interface, wl_shm_interface.name) == 0) {
-    state->shm = wl_registry_bind(registry, name, &wl_shm_interface, version);
+    state->shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
   }
 }
 
